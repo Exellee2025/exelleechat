@@ -1,3 +1,6 @@
+import json
+from collections import defaultdict
+
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +20,7 @@ from app.schemas import (
     MessageCreate,
     MessageOut,
     DirectChatCreate,
+    OnlineUserOut,
 )
 
 app = FastAPI()
@@ -25,12 +29,47 @@ security = HTTPBearer()
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 active_connections: dict[int, list[WebSocket]] = {}
-online_users: dict[int, str] = {}
+online_user_counts: dict[int, int] = defaultdict(int)
+
+GROUP_CHAT_PASSWORD = "315146"
 
 
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
+
+
+def build_chat_out(chat: models.Chat, current_user_id: int, db: Session) -> ChatOut:
+    participants = (
+        db.query(models.ChatParticipant)
+        .filter(models.ChatParticipant.chat_id == chat.id)
+        .all()
+    )
+
+    is_direct = len(participants) == 2 and not chat.title
+
+    if is_direct:
+        other_user_id = next((p.user_id for p in participants if p.user_id != current_user_id), None)
+        other_user = None
+        if other_user_id:
+            other_user = db.query(models.User).filter(models.User.id == other_user_id).first()
+
+        display_title = other_user.username if other_user else f"Личка #{chat.id}"
+        avatar_text = (other_user.username[:2].upper() if other_user and other_user.username else "DM")
+        subtitle = other_user.email if other_user else "Личный чат"
+    else:
+        display_title = chat.title or f"Чат #{chat.id}"
+        avatar_text = (display_title[:2].upper() if display_title else "GC")
+        subtitle = f"{len(participants)} участник(ов)"
+
+    return ChatOut(
+        id=chat.id,
+        title=chat.title,
+        display_title=display_title,
+        is_direct=is_direct,
+        avatar_text=avatar_text,
+        subtitle=subtitle,
+    )
 
 
 def get_current_user(
@@ -66,6 +105,24 @@ def get_current_user_from_token(token: str, db: Session):
 
     user = db.query(models.User).filter(models.User.id == int(user_id)).first()
     return user
+
+
+async def broadcast_json(chat_id: int, payload: dict):
+    stale_connections = []
+
+    for connection in active_connections.get(chat_id, []):
+        try:
+            await connection.send_text(json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            stale_connections.append(connection)
+
+    if stale_connections and chat_id in active_connections:
+        active_connections[chat_id] = [
+            conn for conn in active_connections[chat_id]
+            if conn not in stale_connections
+        ]
+        if not active_connections[chat_id]:
+            del active_connections[chat_id]
 
 
 @app.get("/")
@@ -138,12 +195,12 @@ def get_users(
     return db.query(models.User).all()
 
 
-@app.get("/online-users")
+@app.get("/online-users", response_model=list[OnlineUserOut])
 def get_online_users(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    ids = list(online_users.keys())
+    ids = [user_id for user_id, count in online_user_counts.items() if count > 0]
 
     if not ids:
         return []
@@ -151,11 +208,12 @@ def get_online_users(
     users = db.query(models.User).filter(models.User.id.in_(ids)).all()
 
     return [
-        {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-        }
+        OnlineUserOut(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            avatar_text=(user.username[:2].upper() if user.username else "US"),
+        )
         for user in users
     ]
 
@@ -166,17 +224,23 @@ def create_chat(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    if chat.password != GROUP_CHAT_PASSWORD:
+        raise HTTPException(status_code=403, detail="Неверный пароль для создания общего чата")
+
     new_chat = models.Chat(title=chat.title)
 
     db.add(new_chat)
     db.commit()
     db.refresh(new_chat)
 
-    participant = models.ChatParticipant(chat_id=new_chat.id, user_id=current_user.id)
-    db.add(participant)
+    users = db.query(models.User).all()
+    for user in users:
+        participant = models.ChatParticipant(chat_id=new_chat.id, user_id=user.id)
+        db.add(participant)
+
     db.commit()
 
-    return new_chat
+    return build_chat_out(new_chat, current_user.id, db)
 
 
 @app.get("/chats", response_model=list[ChatOut])
@@ -196,7 +260,7 @@ def get_chats(
         return []
 
     chats = db.query(models.Chat).filter(models.Chat.id.in_(chat_ids)).all()
-    return chats
+    return [build_chat_out(chat, current_user.id, db) for chat in chats]
 
 
 @app.post("/direct-chats", response_model=ChatOut)
@@ -221,18 +285,21 @@ def create_direct_chat(
     my_chat_ids = [item.chat_id for item in my_chat_links]
 
     if my_chat_ids:
-        existing_chat = (
+        candidate_chats = (
             db.query(models.ChatParticipant)
-            .filter(
-                models.ChatParticipant.chat_id.in_(my_chat_ids),
-                models.ChatParticipant.user_id == data.user_id
-            )
-            .first()
+            .filter(models.ChatParticipant.chat_id.in_(my_chat_ids))
+            .all()
         )
 
-        if existing_chat:
-            chat = db.query(models.Chat).filter(models.Chat.id == existing_chat.chat_id).first()
-            return chat
+        chat_to_participants: dict[int, set[int]] = defaultdict(set)
+        for row in candidate_chats:
+            chat_to_participants[row.chat_id].add(row.user_id)
+
+        for chat_id, members in chat_to_participants.items():
+            if members == {current_user.id, data.user_id}:
+                existing_chat = db.query(models.Chat).filter(models.Chat.id == chat_id).first()
+                if existing_chat:
+                    return build_chat_out(existing_chat, current_user.id, db)
 
     new_chat = models.Chat(title=None)
     db.add(new_chat)
@@ -246,7 +313,7 @@ def create_direct_chat(
     db.add(participant_2)
     db.commit()
 
-    return new_chat
+    return build_chat_out(new_chat, current_user.id, db)
 
 
 @app.post("/chats/{chat_id}/messages", response_model=MessageOut)
@@ -281,8 +348,17 @@ async def send_message(
     db.commit()
     db.refresh(new_message)
 
-    for connection in active_connections.get(chat_id, []):
-        await connection.send_text(f"{current_user.username}: {message.text}")
+    payload = {
+        "type": "message",
+        "chat_id": chat_id,
+        "id": new_message.id,
+        "text": new_message.text,
+        "created_at": new_message.created_at.isoformat(),
+        "user_id": current_user.id,
+        "username": current_user.username,
+    }
+
+    await broadcast_json(chat_id, payload)
 
     return new_message
 
@@ -325,6 +401,8 @@ async def websocket_endpoint(
     token: str = Query(...)
 ):
     db = SessionLocal()
+    user = None
+
     try:
         user = get_current_user_from_token(token, db)
         if not user:
@@ -345,7 +423,7 @@ async def websocket_endpoint(
 
         await websocket.accept()
 
-        online_users[user.id] = user.username
+        online_user_counts[user.id] += 1
 
         if chat_id not in active_connections:
             active_connections[chat_id] = []
@@ -353,26 +431,39 @@ async def websocket_endpoint(
 
         try:
             while True:
-                data = await websocket.receive_text()
+                raw_data = await websocket.receive_text()
 
-                for connection in active_connections.get(chat_id, []):
-                    if connection != websocket:
-                        await connection.send_text(f"{user.username}: {data}")
+                try:
+                    data = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    data = {"type": "legacy", "text": raw_data}
+
+                if data.get("type") == "typing":
+                    await broadcast_json(
+                        chat_id,
+                        {
+                            "type": "typing",
+                            "chat_id": chat_id,
+                            "user_id": user.id,
+                            "username": user.username,
+                            "is_typing": bool(data.get("is_typing", False)),
+                        },
+                    )
+
         except WebSocketDisconnect:
+            pass
+
+    finally:
+        if user:
             if chat_id in active_connections and websocket in active_connections[chat_id]:
                 active_connections[chat_id].remove(websocket)
 
             if chat_id in active_connections and not active_connections[chat_id]:
                 del active_connections[chat_id]
 
-            still_online = any(
-                user.id in [
-                    get_current_user_from_token(token, db).id
-                    for token in []
-                ]
-            )
-            # Заглушка не нужна, просто удаляем юзера при закрытии текущего сокета
-            if user.id in online_users:
-                del online_users[user.id]
-    finally:
+            if online_user_counts[user.id] > 0:
+                online_user_counts[user.id] -= 1
+            if online_user_counts[user.id] <= 0:
+                online_user_counts.pop(user.id, None)
+
         db.close()

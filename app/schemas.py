@@ -30,14 +30,16 @@ class Token(BaseModel):
 
 class ChatCreate(BaseModel):
     title: str | None = None
+    password: str
 
 
 class ChatOut(BaseModel):
     id: int
     title: str | None = None
-
-    class Config:
-        from_attributes = True
+    display_title: str
+    is_direct: bool = False
+    avatar_text: str | None = None
+    subtitle: str | None = None
 
 
 class MessageCreate(BaseModel):
@@ -53,7 +55,8 @@ class MessageOut(BaseModel):
 
     class Config:
         from_attributes = True
-        
+
+
 class DirectChatCreate(BaseModel):
     user_id: int
 
@@ -63,3 +66,10 @@ class ChatParticipantOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class OnlineUserOut(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    avatar_text: str | None = None

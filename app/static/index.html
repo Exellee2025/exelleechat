@@ -92,8 +92,7 @@ body {
 }
 
 .input,
-button,
-textarea {
+button {
     width: 100%;
     border: none;
     border-radius: 14px;
@@ -101,8 +100,7 @@ textarea {
     font-size: 14px;
 }
 
-.input,
-textarea {
+.input {
     background: var(--panel-3);
     color: var(--text);
     outline: none;
@@ -110,8 +108,7 @@ textarea {
     border: 1px solid transparent;
 }
 
-.input:focus,
-textarea:focus {
+.input:focus {
     border-color: rgba(99,102,241,0.7);
 }
 
@@ -208,6 +205,12 @@ button.ghost:hover {
     background: rgba(99,102,241,0.12);
 }
 
+.card-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
 .card-title {
     font-weight: 700;
     margin-bottom: 4px;
@@ -216,6 +219,20 @@ button.ghost:hover {
 .card-sub {
     color: var(--muted);
     font-size: 13px;
+}
+
+.avatar {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #6366f1, #0ea5e9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    color: white;
+    box-shadow: 0 8px 24px rgba(99,102,241,0.25);
 }
 
 .online-dot {
@@ -286,16 +303,33 @@ button.ghost:hover {
     word-break: break-word;
 }
 
+.typing-indicator {
+    padding: 0 20px 10px;
+    color: var(--muted);
+    font-size: 13px;
+    min-height: 24px;
+}
+
 .chat-bottom {
     border-top: 1px solid var(--border);
     padding: 14px;
     display: flex;
     gap: 10px;
+    align-items: center;
 }
 
 .chat-bottom input {
     flex: 1;
     margin: 0;
+    height: 48px;
+    font-size: 15px;
+}
+
+.chat-bottom button {
+    width: auto;
+    padding: 0 18px;
+    height: 48px;
+    white-space: nowrap;
 }
 
 .empty {
@@ -314,6 +348,10 @@ button.ghost:hover {
     font-size: 12px;
     border: 1px solid var(--border);
     color: var(--muted);
+}
+
+.hidden {
+    display: none !important;
 }
 
 @media (max-width: 1100px) {
@@ -352,7 +390,7 @@ button.ghost:hover {
             <p>Твоя тёмная башня переписок</p>
         </div>
 
-        <div class="section">
+        <div class="section" id="registerBlock">
             <h3>Регистрация</h3>
             <input class="input" id="rUser" placeholder="Username">
             <input class="input" id="rEmail" placeholder="Email">
@@ -360,7 +398,7 @@ button.ghost:hover {
             <button onclick="register()">Создать аккаунт</button>
         </div>
 
-        <div class="section">
+        <div class="section" id="loginBlock">
             <h3>Вход</h3>
             <input class="input" id="lEmail" placeholder="Email">
             <input class="input" id="lPass" type="password" placeholder="Password">
@@ -368,12 +406,17 @@ button.ghost:hover {
                 <button onclick="login()">Войти</button>
                 <button class="secondary" onclick="logout()">Выйти</button>
             </div>
+        </div>
+
+        <div class="section">
+            <h3>Профиль</h3>
             <div class="me-box" id="me">Не авторизован</div>
         </div>
 
         <div class="section">
             <h3>Новый общий чат</h3>
             <input class="input" id="newChatTitle" placeholder="Название чата">
+            <input class="input" id="chatPassword" type="password" placeholder="Пароль создания">
             <button class="ghost" onclick="createGroupChat()">Создать чат</button>
         </div>
     </aside>
@@ -412,8 +455,10 @@ button.ghost:hover {
             <div class="empty">Тут пока тихо. Выбери чат и разбуди тишину первым сообщением.</div>
         </div>
 
+        <div class="typing-indicator" id="typingIndicator"></div>
+
         <div class="chat-bottom">
-            <input class="input" id="msgInput" placeholder="Напиши сообщение..." onkeydown="handleEnter(event)">
+            <input class="input" id="msgInput" placeholder="Напиши сообщение..." onkeydown="handleMessageKeydown(event)" oninput="handleTyping()">
             <button onclick="send()">Отправить</button>
         </div>
     </main>
@@ -426,6 +471,10 @@ let currentChat = null;
 let socket = null;
 let usersMap = {};
 let chatsMap = {};
+let typingTimeout = null;
+let typingVisibleTimeout = null;
+let lastTypingSent = false;
+let pageFocused = true;
 
 function wsBase() {
     const protocol = location.protocol === "https:" ? "wss" : "ws";
@@ -445,12 +494,68 @@ function clearMessages() {
 }
 
 function escapeHtml(value) {
-    return value
+    return String(value)
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+}
+
+function initialsFromText(text) {
+    if (!text) return "??";
+    return text.trim().slice(0, 2).toUpperCase();
+}
+
+function updateAuthUI() {
+    const loggedIn = !!token;
+    document.getElementById("registerBlock").classList.toggle("hidden", loggedIn);
+    document.getElementById("loginBlock").classList.toggle("hidden", loggedIn);
+}
+
+function requestNotificationPermission() {
+    if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+    }
+}
+
+function showNotification(title, body) {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    new Notification(title, { body });
+}
+
+function renderAvatar(text) {
+    return `<div class="avatar">${escapeHtml(initialsFromText(text))}</div>`;
+}
+
+function setTyping(text = "") {
+    document.getElementById("typingIndicator").innerText = text;
+}
+
+function resetTypingSendState() {
+    lastTypingSent = false;
+    clearTimeout(typingTimeout);
+}
+
+function sendTypingState(isTyping) {
+    if (!socket || socket.readyState !== WebSocket.OPEN || !currentChat) return;
+    socket.send(JSON.stringify({ type: "typing", is_typing: isTyping }));
+}
+
+function handleTyping() {
+    if (!currentChat || !socket || socket.readyState !== WebSocket.OPEN) return;
+
+    if (!lastTypingSent) {
+        sendTypingState(true);
+        lastTypingSent = true;
+    }
+
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+        sendTypingState(false);
+        lastTypingSent = false;
+    }, 1200);
 }
 
 async function register() {
@@ -483,6 +588,8 @@ async function login() {
     if (res.ok) {
         token = data.access_token;
         localStorage.setItem("token", token);
+        updateAuthUI();
+        requestNotificationPermission();
         await loadMe();
         await loadUsers();
         await loadOnlineUsers();
@@ -501,6 +608,7 @@ async function logout() {
     chatsMap = {};
     setMe("Не авторизован");
     setStatus("offline mode");
+    setTyping("");
     document.getElementById("users").innerHTML = "";
     document.getElementById("chats").innerHTML = "";
     document.getElementById("onlineUsersBox").innerHTML = "";
@@ -508,6 +616,7 @@ async function logout() {
     document.getElementById("chatHint").innerText = "Выбери пользователя или комнату слева";
     document.getElementById("onlineCount").innerText = "0 online";
     clearMessages();
+    updateAuthUI();
 
     if (socket) {
         socket.close();
@@ -516,6 +625,8 @@ async function logout() {
 }
 
 async function loadMe() {
+    if (!token) return;
+
     const res = await fetch("/me", {
         headers: {Authorization: `Bearer ${token}`}
     });
@@ -527,7 +638,33 @@ async function loadMe() {
     }
 }
 
+function renderUserCard(user, isOnline = false) {
+    return `
+        <div class="card-row">
+            ${renderAvatar(user.avatar_text || user.username)}
+            <div>
+                <div class="card-title">${isOnline ? '<span class="online-dot"></span>' : ''}${escapeHtml(user.username)}</div>
+                <div class="card-sub">${escapeHtml(user.email || "")}</div>
+            </div>
+        </div>
+    `;
+}
+
+function renderChatCard(chat) {
+    return `
+        <div class="card-row">
+            ${renderAvatar(chat.avatar_text || chat.display_title)}
+            <div>
+                <div class="card-title">${escapeHtml(chat.display_title)}</div>
+                <div class="card-sub">${escapeHtml(chat.subtitle || "")}</div>
+            </div>
+        </div>
+    `;
+}
+
 async function loadUsers() {
+    if (!token) return;
+
     const res = await fetch("/users", {
         headers: {Authorization: `Bearer ${token}`}
     });
@@ -542,10 +679,7 @@ async function loadUsers() {
 
         const div = document.createElement("div");
         div.className = "card";
-        div.innerHTML = `
-            <div class="card-title">${escapeHtml(u.username)}</div>
-            <div class="card-sub">${escapeHtml(u.email)}</div>
-        `;
+        div.innerHTML = renderUserCard(u, false);
         div.onclick = () => createDirectChat(u.id, u.username);
         box.appendChild(div);
     });
@@ -569,10 +703,7 @@ async function loadOnlineUsers() {
 
         const div = document.createElement("div");
         div.className = "card";
-        div.innerHTML = `
-            <div class="card-title"><span class="online-dot"></span>${escapeHtml(u.username)}</div>
-            <div class="card-sub">${escapeHtml(u.email)}</div>
-        `;
+        div.innerHTML = renderUserCard(u, true);
         div.onclick = () => createDirectChat(u.id, u.username);
         box.appendChild(div);
     });
@@ -592,7 +723,7 @@ async function createDirectChat(id, name) {
 
     if (res.ok) {
         await loadChats();
-        openChat(data.id, name || `Личка #${data.id}`);
+        openChat(data.id, data.display_title || name || `Личка #${data.id}`);
     } else {
         alert(data.detail || "Не удалось создать чат");
     }
@@ -600,7 +731,10 @@ async function createDirectChat(id, name) {
 
 async function createGroupChat() {
     const title = document.getElementById("newChatTitle").value.trim();
+    const password = document.getElementById("chatPassword").value.trim();
+
     if (!title) return alert("Введи название чата");
+    if (!password) return alert("Введи пароль создания");
 
     const res = await fetch("/chats", {
         method: "POST",
@@ -608,21 +742,24 @@ async function createGroupChat() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({title})
+        body: JSON.stringify({ title, password })
     });
 
     const data = await res.json();
 
     if (res.ok) {
         document.getElementById("newChatTitle").value = "";
+        document.getElementById("chatPassword").value = "";
         await loadChats();
-        openChat(data.id, data.title || `Чат #${data.id}`);
+        openChat(data.id, data.display_title || data.title || `Чат #${data.id}`);
     } else {
         alert(data.detail || "Не удалось создать чат");
     }
 }
 
 async function loadChats() {
+    if (!token) return;
+
     const res = await fetch("/chats", {
         headers: {Authorization: `Bearer ${token}`}
     });
@@ -633,16 +770,12 @@ async function loadChats() {
 
     data.forEach(chat => {
         chatsMap[chat.id] = chat;
-        const title = chat.title || `Личка #${chat.id}`;
 
         const div = document.createElement("div");
         div.className = "card";
         div.dataset.chatId = chat.id;
-        div.innerHTML = `
-            <div class="card-title">${escapeHtml(title)}</div>
-            <div class="card-sub">ID: ${chat.id}</div>
-        `;
-        div.onclick = () => openChat(chat.id, title);
+        div.innerHTML = renderChatCard(chat);
+        div.onclick = () => openChat(chat.id, chat.display_title);
         box.appendChild(div);
     });
 }
@@ -656,6 +789,8 @@ function markActiveChat(chatId) {
 async function openChat(id, title) {
     currentChat = id;
     markActiveChat(id);
+    setTyping("");
+    resetTypingSendState();
 
     document.getElementById("chatTitle").innerText = title;
     document.getElementById("chatHint").innerText = `Чат ID ${id}`;
@@ -692,7 +827,7 @@ function connectWS(id) {
     if (socket) socket.close();
 
     setStatus("connecting websocket");
-    socket = new WebSocket(`${wsBase()}/ws/${id}?token=${token}`);
+    socket = new WebSocket(`${wsBase()}/ws/${id}?token=${encodeURIComponent(token)}`);
 
     socket.onopen = () => {
         setStatus("live");
@@ -700,10 +835,40 @@ function connectWS(id) {
     };
 
     socket.onmessage = (e) => {
-        const parts = e.data.split(": ");
-        const name = parts.shift() || "User";
-        const text = parts.join(": ");
-        addMsg(name, text, currentUser && name === currentUser.username);
+        let payload = null;
+
+        try {
+            payload = JSON.parse(e.data);
+        } catch {
+            return;
+        }
+
+        if (payload.type === "message") {
+            const isMe = currentUser && payload.user_id === currentUser.id;
+            addMsg(payload.username || "User", payload.text || "", isMe);
+
+            if (!isMe && (!pageFocused || document.hidden)) {
+                const chatName = chatsMap[payload.chat_id]?.display_title || "Новый чат";
+                showNotification(payload.username || "Новое сообщение", `${chatName}: ${payload.text || ""}`);
+                document.title = `💬 ${payload.username}: ${payload.text || ""}`;
+            }
+
+            setTyping("");
+        }
+
+        if (payload.type === "typing") {
+            if (!currentUser || payload.user_id === currentUser.id) return;
+
+            if (payload.is_typing) {
+                const name = payload.username || "Кто-то";
+                setTyping(`${name} печатает...`);
+
+                clearTimeout(typingVisibleTimeout);
+                typingVisibleTimeout = setTimeout(() => setTyping(""), 1500);
+            } else {
+                setTyping("");
+            }
+        }
     };
 
     socket.onclose = () => {
@@ -738,6 +903,10 @@ async function send() {
 
     input.value = "";
 
+    sendTypingState(false);
+    resetTypingSendState();
+    setTyping("");
+
     const res = await fetch(`/chats/${currentChat}/messages`, {
         method: "POST",
         headers: {
@@ -753,13 +922,32 @@ async function send() {
     }
 }
 
-function handleEnter(e) {
+function handleMessageKeydown(e) {
     if (e.key === "Enter") {
+        e.preventDefault();
         send();
     }
 }
 
+window.addEventListener("focus", () => {
+    pageFocused = true;
+    document.title = "Exellee Chat";
+});
+
+window.addEventListener("blur", () => {
+    pageFocused = false;
+});
+
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+        document.title = "Exellee Chat";
+    }
+});
+
 window.onload = async () => {
+    updateAuthUI();
+    requestNotificationPermission();
+
     if (token) {
         await loadMe();
         await loadUsers();
