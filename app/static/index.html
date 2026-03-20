@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Чат</title>
+
+<style>
+body {
+    margin: 0;
+    font-family: Arial;
+    background: #1e1e1e;
+    color: white;
+    display: flex;
+    height: 100vh;
+}
+
+.sidebar {
+    width: 320px;
+    background: #2a2a2a;
+    padding: 15px;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+.main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+input, button {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 10px;
+    border: none;
+    border-radius: 6px;
+}
+
+button {
+    background: #4f46e5;
+    color: white;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #635bff;
+}
+
+.secondary {
+    background: #555;
+}
+
+.chat, .user {
+    background: #333;
+    padding: 10px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    cursor: pointer;
+}
+
+.chat:hover, .user:hover {
+    background: #444;
+}
+
+.messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.msg {
+    background: #333;
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
+
+.topbar {
+    padding: 15px;
+    background: #2a2a2a;
+}
+
+.bottom {
+    display: flex;
+    padding: 15px;
+    gap: 10px;
+}
+
+.bottom input {
+    flex: 1;
+}
+</style>
+</head>
+
+<body>
+
+<div class="sidebar">
+
+<h3>Регистрация</h3>
+<input id="rUser" placeholder="username">
+<input id="rEmail" placeholder="email">
+<input id="rPass" placeholder="password">
+<button onclick="register()">Регистрация</button>
+
+<h3>Вход</h3>
+<input id="lEmail" placeholder="email">
+<input id="lPass" placeholder="password">
+<button onclick="login()">Войти</button>
+<button class="secondary" onclick="logout()">Выйти</button>
+
+<div id="me"></div>
+
+<h3>Пользователи</h3>
+<button class="secondary" onclick="loadUsers()">Обновить</button>
+<div id="users"></div>
+
+<h3>Чаты</h3>
+<button class="secondary" onclick="loadChats()">Обновить</button>
+<div id="chats"></div>
+
+</div>
+
+<div class="main">
+
+<div class="topbar" id="chatTitle">Чат не выбран</div>
+
+<div class="messages" id="msgs"></div>
+
+<div class="bottom">
+<input id="msgInput" placeholder="Сообщение">
+<button onclick="send()">Send</button>
+</div>
+
+</div>
+
+<script>
+let token = localStorage.getItem("token") || ""
+let currentUser = null
+let currentChat = null
+let socket = null
+let usersMap = {}
+
+function setMe(text){
+    document.getElementById("me").innerText = text
+}
+
+async function register(){
+    let res = await fetch("/register", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+            username: rUser.value,
+            email: rEmail.value,
+            password: rPass.value
+        })
+    })
+
+    let data = await res.json()
+    alert(res.ok ? "OK" : data.detail)
+}
+
+async function login(){
+    let res = await fetch("/login", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+            email: lEmail.value,
+            password: lPass.value
+        })
+    })
+
+    let data = await res.json()
+
+    if(res.ok){
+        token = data.access_token
+        localStorage.setItem("token", token)
+        await loadMe()
+        await loadUsers()
+        await loadChats()
+    } else alert(data.detail)
+}
+
+async function logout(){
+    token = ""
+    localStorage.removeItem("token")
+    currentUser = null
+    currentChat = null
+    setMe("Не авторизован")
+
+    document.getElementById("msgs").innerHTML = ""
+    document.getElementById("chats").innerHTML = ""
+
+    if(socket) socket.close()
+}
+
+async function loadMe(){
+    let res = await fetch("/me", {
+        headers:{Authorization:`Bearer ${token}`}
+    })
+
+    let data = await res.json()
+    if(res.ok){
+        currentUser = data
+        setMe("Ты: " + data.username)
+    }
+}
+
+async function loadUsers(){
+    let res = await fetch("/users", {
+        headers:{Authorization:`Bearer ${token}`}
+    })
+
+    let data = await res.json()
+    let box = document.getElementById("users")
+    box.innerHTML = ""
+
+    data.forEach(u=>{
+        usersMap[u.id]=u
+        if(currentUser && u.id===currentUser.id) return
+
+        let div = document.createElement("div")
+        div.className="user"
+        div.innerText = u.username
+        div.onclick = ()=>createChat(u.id,u.username)
+        box.appendChild(div)
+    })
+}
+
+async function createChat(id,name){
+    let res = await fetch("/direct-chats",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json",
+            Authorization:`Bearer ${token}`
+        },
+        body:JSON.stringify({user_id:id})
+    })
+
+    let data = await res.json()
+
+    if(res.ok){
+        await loadChats()
+        openChat(data.id,name)
+    }
+}
+
+async function loadChats(){
+    let res = await fetch("/chats",{
+        headers:{Authorization:`Bearer ${token}`}
+    })
+
+    let data = await res.json()
+    let box = document.getElementById("chats")
+    box.innerHTML=""
+
+    data.forEach(chat=>{
+        let div = document.createElement("div")
+        div.className="chat"
+        div.innerText = chat.title || "Личка #" + chat.id
+        div.onclick = ()=>openChat(chat.id, div.innerText)
+        box.appendChild(div)
+    })
+}
+
+async function openChat(id,title){
+    currentChat = id
+    document.getElementById("chatTitle").innerText = title
+
+    let res = await fetch(`/chats/${id}/messages`,{
+        headers:{Authorization:`Bearer ${token}`}
+    })
+
+    let data = await res.json()
+    let box = document.getElementById("msgs")
+    box.innerHTML=""
+
+    data.forEach(m=>{
+        let name = usersMap[m.user_id]?.username || "User"
+        addMsg(name,m.text)
+    })
+
+    connectWS(id)
+}
+
+function connectWS(id){
+    if(socket) socket.close()
+
+    socket = new WebSocket(`ws://127.0.0.1:8000/ws/${id}?token=${token}`)
+
+    socket.onmessage = (e)=>{
+        let [name,...rest] = e.data.split(": ")
+        addMsg(name,rest.join(": "))
+    }
+}
+
+function addMsg(name,text){
+    let box = document.getElementById("msgs")
+    let div = document.createElement("div")
+    div.className="msg"
+    div.innerHTML = `<b>${name}</b><br>${text}`
+    box.appendChild(div)
+    box.scrollTop = box.scrollHeight
+}
+
+async function send(){
+    let text = msgInput.value.trim()
+    if(!text || !currentChat) return
+
+    msgInput.value=""
+
+    await fetch(`/chats/${currentChat}/messages`,{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json",
+            Authorization:`Bearer ${token}`
+        },
+        body:JSON.stringify({text})
+    })
+
+    // НЕ добавляем сообщение вручную!
+    // оно прилетит через WebSocket
+}
+
+window.onload = async ()=>{
+    if(token){
+        await loadMe()
+        await loadUsers()
+        await loadChats()
+    }
+}
+</script>
+
+</body>
+</html>
