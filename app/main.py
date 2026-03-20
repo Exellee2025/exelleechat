@@ -1,28 +1,34 @@
+import json
+import os
+from collections import defaultdict
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional, Set
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth import create_access_token, decode_access_token, hash_password, verify_password
-from app.database import Base, engine, get_db, SessionLocal
+from app.database import Base, SessionLocal, engine, get_db
 from app.schemas import (
+    ChatCreate,
+    DirectChatCreate,
+    MessageCreate,
     Token,
     UserCreate,
     UserLogin,
     UserOut,
-    ChatCreate,
-    ChatOut,
-    MessageCreate,
-    MessageOut,
-    DirectChatCreate,
 )
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(APP_DIR)
+INDEX_PATH = os.path.join(PROJECT_ROOT, "index.html")
+
+app = FastAPI(title="Exellee Chat")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,114 +38,156 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# -----------------------------
-# WebSocket connection manager
-# -----------------------------
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Dict[int, List[WebSocket]] = {}
-
-    async def connect(self, chat_id: int, websocket: WebSocket):
-        await websocket.accept()
-        if chat_id not in self.active_connections:
-            self.active_connections[chat_id] = []
-        self.active_connections[chat_id].append(websocket)
-
-    def disconnect(self, chat_id: int, websocket: WebSocket):
-        if chat_id in self.active_connections:
-            if websocket in self.active_connections[chat_id]:
-                self.active_connections[chat_id].remove(websocket)
-            if not self.active_connections[chat_id]:
-                del self.active_connections[chat_id]
-
-    async def broadcast(self, chat_id: int, message: str):
-        if chat_id not in self.active_connections:
-            return
-
-        dead_connections = []
-
-        for connection in self.active_connections[chat_id]:
-            try:
-                await connection.send_text(message)
-            except Exception:
-                dead_connections.append(connection)
-
-        for connection in dead_connections:
-            self.disconnect(chat_id, connection)
+PUBLIC_CHAT_CREATION_PASSWORD = "315146"
 
 
-manager = ConnectionManager()
+def pick_avatar_color(username: str) -> str:
+    palette = [
+        "#4f46e5",
+        "#0ea5e9",
+        "#16a34a",
+        "#f97316",
+        "#e11d48",
+        "#a855f7",
+        "#14b8a6",
+        "#f59e0b",
+    ]
+    idx = sum(ord(c) for c in username) % len(palette)
+    return palette[idx]
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
-def serialize_user(user):
+def serialize_user(user: models.User) -> dict:
     return {
         "id": user.id,
-        "username": getattr(user, "username", None),
+        "username": user.username,
+        "avatar_color": user.avatar_color,
     }
 
 
-def serialize_chat(chat):
+def direct_chat_display_title(chat: models.Chat, current_user_id: int) -> str:
+    if chat.is_public:
+        return chat.title
+
+    users = chat.users or []
+    if len(users) == 2:
+        other = next((u for u in users if u.id != current_user_id), None)
+        if other:
+            return other.username
+    return chat.title
+
+
+def serialize_chat(chat: models.Chat, current_user_id: Optional[int] = None) -> dict:
+    title = chat.title
+    if current_user_id is not None:
+        title = direct_chat_display_title(chat, current_user_id)
+
     return {
         "id": chat.id,
-        "title": getattr(chat, "title", None),
-        "is_public": bool(getattr(chat, "is_public", False)),
+        "title": title,
+        "is_public": chat.is_public,
     }
 
 
-def serialize_message(message):
-    sender = getattr(message, "user", None)
+def serialize_message(message: models.Message) -> dict:
     return {
         "id": message.id,
         "chat_id": message.chat_id,
         "user_id": message.user_id,
         "content": message.content,
-        "created_at": message.created_at.isoformat() if getattr(message, "created_at", None) else None,
-        "username": getattr(sender, "username", None) if sender else None,
+        "created_at": message.created_at.isoformat(),
+        "username": message.user.username if message.user else None,
+        "avatar_color": message.user.avatar_color if message.user else None,
     }
 
 
-def get_user_from_token(token: str, db: Session):
+def get_user_from_token(token: str, db: Session) -> Optional[models.User]:
     try:
         payload = decode_access_token(token)
         user_id = payload.get("sub")
         if user_id is None:
             return None
-        user = db.query(models.User).filter(models.User.id == int(user_id)).first()
-        return user
+        return db.query(models.User).filter(models.User.id == int(user_id)).first()
     except Exception:
         return None
 
 
-def get_current_user(token: str = Query(...), db: Session = Depends(get_db)):
+def get_current_user(token: str = Query(...), db: Session = Depends(get_db)) -> models.User:
     user = get_user_from_token(token, db)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     return user
 
 
-def user_in_chat(chat, user_id: int) -> bool:
-    users = getattr(chat, "users", None)
-    if not users:
-        return False
-    member_ids = [u.id for u in users]
-    return user_id in member_ids
+def user_in_chat(chat: models.Chat, user_id: int) -> bool:
+    users = getattr(chat, "users", None) or []
+    return any(u.id == user_id for u in users)
 
 
-def can_access_chat(chat, user_id: int) -> bool:
-    if not chat:
-        return False
-    if bool(getattr(chat, "is_public", False)):
+def can_access_chat(chat: models.Chat, user_id: int) -> bool:
+    if chat.is_public:
         return True
     return user_in_chat(chat, user_id)
 
 
-# -----------------------------
-# Auth
-# -----------------------------
+class ConnectionManager:
+    def __init__(self):
+        self.chat_connections: Dict[int, List[WebSocket]] = defaultdict(list)
+        self.online_users: Set[int] = set()
+
+    async def connect(self, chat_id: int, user_id: int, websocket: WebSocket):
+        await websocket.accept()
+        self.chat_connections[chat_id].append(websocket)
+        self.online_users.add(user_id)
+
+    def disconnect(self, chat_id: int, user_id: int, websocket: WebSocket):
+        if chat_id in self.chat_connections and websocket in self.chat_connections[chat_id]:
+            self.chat_connections[chat_id].remove(websocket)
+            if not self.chat_connections[chat_id]:
+                del self.chat_connections[chat_id]
+
+        still_connected = any(websocket in sockets for sockets in self.chat_connections.values())
+        if not still_connected:
+            # простой режим, без точного подсчета нескольких вкладок одного юзера
+            self.online_users.discard(user_id)
+
+    async def broadcast(self, chat_id: int, payload: dict):
+        if chat_id not in self.chat_connections:
+            return
+
+        dead = []
+        message = json.dumps(payload, ensure_ascii=False)
+        for ws in self.chat_connections[chat_id]:
+            try:
+                await ws.send_text(message)
+            except Exception:
+                dead.append(ws)
+
+        for ws in dead:
+            if ws in self.chat_connections.get(chat_id, []):
+                self.chat_connections[chat_id].remove(ws)
+
+    def online_list(self, db: Session) -> list:
+        if not self.online_users:
+            return []
+        users = db.query(models.User).filter(models.User.id.in_(self.online_users)).all()
+        return [serialize_user(u) for u in users]
+
+
+manager = ConnectionManager()
+
+
+@app.get("/")
+def root():
+    if os.path.exists(INDEX_PATH):
+        return FileResponse(INDEX_PATH)
+    return {"status": "ok", "message": "index.html not found"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.post("/register", response_model=UserOut)
 def register(user: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(models.User).filter(models.User.username == user.username).first()
@@ -149,6 +197,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     new_user = models.User(
         username=user.username,
         password_hash=hash_password(user.password),
+        avatar_color=pick_avatar_color(user.username),
     )
     db.add(new_user)
     db.commit()
@@ -167,73 +216,88 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
 
 
 @app.get("/me", response_model=UserOut)
-def me(current_user=Depends(get_current_user)):
+def me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
 
-# -----------------------------
-# Chats
-# -----------------------------
+@app.get("/users")
+def get_users(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    users = (
+        db.query(models.User)
+        .filter(models.User.id != current_user.id)
+        .order_by(models.User.username.asc())
+        .all()
+    )
+    return [serialize_user(u) for u in users]
+
+
+@app.get("/online-users")
+def get_online_users(db: Session = Depends(get_db)):
+    return manager.online_list(db)
+
+
 @app.get("/chats")
-def get_chats(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    all_chats = db.query(models.Chat).all()
-
-    visible_chats = []
-    for chat in all_chats:
-        if can_access_chat(chat, current_user.id):
-            visible_chats.append(serialize_chat(chat))
-
-    return visible_chats
+def get_chats(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    chats = db.query(models.Chat).options(joinedload(models.Chat.users)).order_by(models.Chat.created_at.desc()).all()
+    visible = [serialize_chat(chat, current_user.id) for chat in chats if can_access_chat(chat, current_user.id)]
+    return visible
 
 
 @app.post("/chats")
-def create_chat(chat: ChatCreate, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    title = getattr(chat, "title", None)
-    is_public = bool(getattr(chat, "is_public", False))
+def create_chat(
+    chat: ChatCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    title = chat.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Chat title cannot be empty")
+
+    if chat.is_public:
+        if chat.creation_password != PUBLIC_CHAT_CREATION_PASSWORD:
+            raise HTTPException(status_code=403, detail="Wrong creation password")
 
     new_chat = models.Chat(
         title=title,
-        is_public=is_public,
+        is_public=chat.is_public,
         created_by_id=current_user.id,
     )
-
     db.add(new_chat)
     db.commit()
     db.refresh(new_chat)
 
-    # если чат не публичный, добавим создателя в участники
-    if not is_public and hasattr(new_chat, "users"):
+    if not chat.is_public:
         new_chat.users.append(current_user)
         db.commit()
         db.refresh(new_chat)
 
-    return serialize_chat(new_chat)
+    return serialize_chat(new_chat, current_user.id)
 
 
 @app.post("/direct-chats")
 def create_direct_chat(
     data: DirectChatCreate,
-    current_user=Depends(get_current_user),
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    other_user_id = getattr(data, "user_id", None)
-    if other_user_id is None:
-        raise HTTPException(status_code=400, detail="user_id is required")
-
-    if other_user_id == current_user.id:
+    if data.user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot create direct chat with yourself")
 
-    other_user = db.query(models.User).filter(models.User.id == other_user_id).first()
+    other_user = db.query(models.User).filter(models.User.id == data.user_id).first()
     if not other_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    chats = db.query(models.Chat).filter(models.Chat.is_public == False).all()
+    private_chats = (
+        db.query(models.Chat)
+        .filter(models.Chat.is_public == False)  # noqa: E712
+        .options(joinedload(models.Chat.users))
+        .all()
+    )
 
-    for chat in chats:
-        users = getattr(chat, "users", [])
-        user_ids = sorted([u.id for u in users]) if users else []
-        if user_ids == sorted([current_user.id, other_user_id]):
-            return serialize_chat(chat)
+    for chat in private_chats:
+        ids = sorted([u.id for u in chat.users])
+        if ids == sorted([current_user.id, other_user.id]):
+            return serialize_chat(chat, current_user.id)
 
     new_chat = models.Chat(
         title=f"{current_user.username} & {other_user.username}",
@@ -244,33 +308,26 @@ def create_direct_chat(
     db.commit()
     db.refresh(new_chat)
 
-    if hasattr(new_chat, "users"):
-        new_chat.users.append(current_user)
-        new_chat.users.append(other_user)
-        db.commit()
-        db.refresh(new_chat)
+    new_chat.users.append(current_user)
+    new_chat.users.append(other_user)
+    db.commit()
+    db.refresh(new_chat)
 
-    return serialize_chat(new_chat)
-
-
-@app.get("/chats/{chat_id}")
-def get_chat(chat_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    chat = db.query(models.Chat).filter(models.Chat.id == chat_id).first()
-    if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
-
-    if not can_access_chat(chat, current_user.id):
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    return serialize_chat(chat)
+    return serialize_chat(new_chat, current_user.id)
 
 
-# -----------------------------
-# Messages
-# -----------------------------
 @app.get("/chats/{chat_id}/messages")
-def get_messages(chat_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    chat = db.query(models.Chat).filter(models.Chat.id == chat_id).first()
+def get_messages(
+    chat_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    chat = (
+        db.query(models.Chat)
+        .options(joinedload(models.Chat.users))
+        .filter(models.Chat.id == chat_id)
+        .first()
+    )
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
@@ -279,11 +336,11 @@ def get_messages(chat_id: int, current_user=Depends(get_current_user), db: Sessi
 
     messages = (
         db.query(models.Message)
+        .options(joinedload(models.Message.user))
         .filter(models.Message.chat_id == chat_id)
         .order_by(models.Message.created_at.asc())
         .all()
     )
-
     return [serialize_message(m) for m in messages]
 
 
@@ -291,17 +348,22 @@ def get_messages(chat_id: int, current_user=Depends(get_current_user), db: Sessi
 async def create_message(
     chat_id: int,
     message: MessageCreate,
-    current_user=Depends(get_current_user),
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    chat = db.query(models.Chat).filter(models.Chat.id == chat_id).first()
+    chat = (
+        db.query(models.Chat)
+        .options(joinedload(models.Chat.users))
+        .filter(models.Chat.id == chat_id)
+        .first()
+    )
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
     if not can_access_chat(chat, current_user.id):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    content = getattr(message, "content", "").strip()
+    content = message.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
@@ -311,88 +373,60 @@ async def create_message(
         content=content,
         created_at=datetime.utcnow(),
     )
-
     db.add(new_message)
     db.commit()
     db.refresh(new_message)
+    db.refresh(current_user)
 
-    # Подтянем автора для сериализации
     new_message.user = current_user
 
     payload = serialize_message(new_message)
-
-    try:
-        import json
-        await manager.broadcast(chat_id, json.dumps({
-            "type": "new_message",
-            "message": payload
-        }, ensure_ascii=False))
-    except Exception:
-        pass
-
+    await manager.broadcast(chat_id, {"type": "new_message", "message": payload})
     return payload
 
 
-# -----------------------------
-# WebSocket
-# -----------------------------
 @app.websocket("/ws/{chat_id}")
 async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str = Query(...)):
     db = SessionLocal()
     user = None
 
     try:
-        # 1. Проверяем токен
         user = get_user_from_token(token, db)
         if not user:
             await websocket.close(code=1008)
             return
 
-        # 2. Проверяем чат
-        chat = db.query(models.Chat).filter(models.Chat.id == chat_id).first()
-        if not chat:
+        chat = (
+            db.query(models.Chat)
+            .options(joinedload(models.Chat.users))
+            .filter(models.Chat.id == chat_id)
+            .first()
+        )
+        if not chat or not can_access_chat(chat, user.id):
             await websocket.close(code=1008)
             return
 
-        # 3. Проверяем доступ
-        if not can_access_chat(chat, user.id):
-            await websocket.close(code=1008)
-            return
+        await manager.connect(chat_id, user.id, websocket)
+        await manager.broadcast(chat_id, {"type": "online_users", "users": manager.online_list(db)})
 
-        # 4. Подключаем
-        await manager.connect(chat_id, websocket)
-
-        # 5. Слушаем сокет
         while True:
             data = await websocket.receive_text()
 
-            # Можно отправлять ping с фронта, чтобы держать соединение живым
             if data == "ping":
-                await websocket.send_text("pong")
+                await websocket.send_text(json.dumps({"type": "pong"}))
                 continue
 
-            # Можно отправлять typing-события строкой
             if data == "typing":
-                try:
-                    import json
-                    await manager.broadcast(chat_id, json.dumps({
+                await manager.broadcast(
+                    chat_id,
+                    {
                         "type": "typing",
+                        "chat_id": chat_id,
                         "user_id": user.id,
                         "username": user.username,
-                    }, ensure_ascii=False))
-                except Exception:
-                    pass
+                    },
+                )
                 continue
-
-            # Остальное просто не валим сервером
-            try:
-                import json
-                await websocket.send_text(json.dumps({
-                    "type": "info",
-                    "message": "unknown websocket event"
-                }, ensure_ascii=False))
-            except Exception:
-                pass
 
     except WebSocketDisconnect:
         pass
@@ -403,8 +437,10 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str = Qu
         except Exception:
             pass
     finally:
-        try:
-            manager.disconnect(chat_id, websocket)
-        except Exception:
-            pass
+        if user:
+            manager.disconnect(chat_id, user.id, websocket)
+            try:
+                await manager.broadcast(chat_id, {"type": "online_users", "users": manager.online_list(db)})
+            except Exception:
+                pass
         db.close()
