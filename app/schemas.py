@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict
 
@@ -12,7 +12,9 @@ class Token(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
-    avatar_url: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    nickname_color: Optional[str] = "#4f8cff"
 
 
 class UserLogin(BaseModel):
@@ -25,18 +27,29 @@ class UserOut(BaseModel):
 
     id: int
     username: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     avatar_url: Optional[str] = None
+    avatar_path: Optional[str] = None
+    nickname_color: Optional[str] = "#4f8cff"
     created_at: datetime
 
 
-class AvatarUpdate(BaseModel):
-    avatar_url: Optional[str] = None
+class ProfileUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    nickname_color: Optional[str] = None
 
 
 class ChatCreate(BaseModel):
     title: str
     is_public: bool = True
     create_password: Optional[str] = None
+    chat_password: Optional[str] = None
+
+
+class ChatJoinRequest(BaseModel):
+    password: Optional[str] = None
 
 
 class DirectChatCreate(BaseModel):
@@ -44,13 +57,17 @@ class DirectChatCreate(BaseModel):
 
 
 class MessageCreate(BaseModel):
-    content: str
+    content: Optional[str] = None
+    media_url: Optional[str] = None
+    media_type: Optional[str] = None
 
 
 class MessageOut(BaseModel):
     id: int
     chat_id: int
-    content: str
+    content: Optional[str] = None
+    media_url: Optional[str] = None
+    media_type: Optional[str] = None
     created_at: datetime
     user: UserOut
 
@@ -60,6 +77,8 @@ class ChatOut(BaseModel):
     title: str
     is_direct: bool
     is_public: bool
+    requires_password: bool
+    joined: bool
     created_at: datetime
-    members: list[UserOut]
+    members: List[UserOut] = []
     last_message: Optional[MessageOut] = None

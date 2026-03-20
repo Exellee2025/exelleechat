@@ -1,6 +1,22 @@
-from pathlib import Path
+from __future__ import annotations
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+import asyncio
+import os
+import uuid
+from pathlib import Path
+from typing import Optional
+
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
@@ -9,14 +25,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth import create_access_token, decode_access_token, hash_password, verify_password
-from app.database import Base, engine, get_db, SessionLocal
+from app.database import Base, SessionLocal, engine, get_db
 from app.schemas import (
-    AvatarUpdate,
     ChatCreate,
+    ChatJoinRequest,
     ChatOut,
     DirectChatCreate,
     MessageCreate,
     MessageOut,
+    ProfileUpdate,
     Token,
     UserCreate,
     UserLogin,
@@ -29,9 +46,39 @@ app = FastAPI()
 security = HTTPBearer(auto_error=False)
 
 STATIC_DIR = Path("app/static")
+AVATAR_DIR = STATIC_DIR / "avatars"
+MEDIA_DIR = STATIC_DIR / "media"
+
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+ALLOWED_AVATAR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+ALLOWED_MEDIA_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".mp4",
+    ".webm",
+    ".mov",
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".pdf",
+    ".txt",
+    ".zip",
+    ".rar",
+}
+MAX_AVATAR_SIZE = 512 * 1024
+MAX_MEDIA_SIZE = 20 * 1024 * 1024
+MEDIA_TTL_SECONDS = 3600
+MEDIA_CLEANUP_INTERVAL_SECONDS = 300
 
 
 def get_current_user(
@@ -52,11 +99,38 @@ def get_current_user(
     return user
 
 
+def safe_trim(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def file_extension(filename: Optional[str]) -> str:
+    return Path(filename or "").suffix.lower()
+
+
+def save_bytes_to_file(directory: Path, content: bytes, ext: str) -> str:
+    filename = f"{uuid.uuid4().hex}{ext}"
+    path = directory / filename
+    with open(path, "wb") as f:
+        f.write(content)
+    return filename
+
+
 def serialize_user(user: models.User) -> dict:
+    display_name = " ".join(
+        part for part in [safe_trim(user.first_name), safe_trim(user.last_name)] if part
+    ).strip()
+
     return {
         "id": user.id,
         "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "display_name": display_name or user.username,
         "avatar_url": user.avatar_url,
+        "nickname_color": user.nickname_color or "#4f8cff",
         "created_at": user.created_at,
     }
 
@@ -66,6 +140,8 @@ def serialize_message(message: models.Message) -> dict:
         "id": message.id,
         "chat_id": message.chat_id,
         "content": message.content,
+        "media_url": message.media_url,
+        "media_type": message.media_type,
         "created_at": message.created_at,
         "user": serialize_user(message.user),
     }
@@ -75,26 +151,18 @@ def build_chat_title(chat: models.Chat, current_user_id: int) -> str:
     if not chat.is_direct:
         return chat.title or f"Чат #{chat.id}"
 
-    others = [member.user.username for member in chat.members if member.user_id != current_user_id]
-    return others[0] if others else (chat.title or f"Личка #{chat.id}")
+    others = [member.user for member in chat.members if member.user_id != current_user_id]
+    if others:
+        other = others[0]
+        display_name = " ".join(
+            part for part in [safe_trim(other.first_name), safe_trim(other.last_name)] if part
+        ).strip()
+        return display_name or other.username
+
+    return chat.title or f"Личка #{chat.id}"
 
 
-def can_access_chat(db: Session, user_id: int, chat: models.Chat) -> bool:
-    if chat.is_public and not chat.is_direct:
-        return True
-
-    membership = (
-        db.query(models.ChatMember)
-        .filter(
-            models.ChatMember.chat_id == chat.id,
-            models.ChatMember.user_id == user_id,
-        )
-        .first()
-    )
-    return membership is not None
-
-
-def ensure_member(db: Session, chat_id: int, user_id: int):
+def is_chat_member(db: Session, chat_id: int, user_id: int) -> bool:
     membership = (
         db.query(models.ChatMember)
         .filter(
@@ -103,27 +171,87 @@ def ensure_member(db: Session, chat_id: int, user_id: int):
         )
         .first()
     )
-    if not membership:
+    return membership is not None
+
+
+def ensure_member(db: Session, chat_id: int, user_id: int):
+    if not is_chat_member(db, chat_id, user_id):
         db.add(models.ChatMember(chat_id=chat_id, user_id=user_id))
         db.commit()
 
 
-def serialize_chat(chat: models.Chat, current_user_id: int) -> dict:
+def can_access_chat(db: Session, user_id: int, chat: models.Chat) -> bool:
+    if chat.is_direct:
+        return is_chat_member(db, chat.id, user_id)
+
+    if chat.password_hash:
+        return is_chat_member(db, chat.id, user_id)
+
+    return True
+
+
+def serialize_chat(chat: models.Chat, current_user_id: int, db: Session) -> dict:
     last_message = None
     if chat.messages:
         ordered = sorted(chat.messages, key=lambda x: (x.created_at, x.id), reverse=True)
         if ordered:
             last_message = serialize_message(ordered[0])
 
+    is_member = is_chat_member(db, chat.id, current_user_id)
+    requires_password = bool(chat.password_hash)
+
     return {
         "id": chat.id,
         "title": build_chat_title(chat, current_user_id),
         "is_direct": chat.is_direct,
         "is_public": chat.is_public,
+        "requires_password": requires_password,
+        "joined": is_member or (chat.is_public and not requires_password and not chat.is_direct),
         "created_at": chat.created_at,
         "members": [serialize_user(member.user) for member in chat.members],
         "last_message": last_message,
     }
+
+
+def remove_old_media_files():
+    if not MEDIA_DIR.exists():
+        return
+
+    now = int(asyncio.get_event_loop().time())
+    for file_path in MEDIA_DIR.iterdir():
+        try:
+            if not file_path.is_file():
+                continue
+            age = int(asyncio.get_event_loop().time()) - int(file_path.stat().st_mtime)
+            if age > MEDIA_TTL_SECONDS:
+                file_path.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"Media cleanup warning for {file_path}: {e}")
+
+
+async def cleanup_media_loop():
+    while True:
+        try:
+            if MEDIA_DIR.exists():
+                current_ts = int(__import__("time").time())
+                for file_path in MEDIA_DIR.iterdir():
+                    try:
+                        if not file_path.is_file():
+                            continue
+                        age = current_ts - int(file_path.stat().st_mtime)
+                        if age > MEDIA_TTL_SECONDS:
+                            file_path.unlink(missing_ok=True)
+                    except Exception as e:
+                        print(f"Media cleanup warning for {file_path.name}: {e}")
+        except Exception as e:
+            print(f"Media cleanup loop error: {e}")
+
+        await asyncio.sleep(MEDIA_CLEANUP_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(cleanup_media_loop())
 
 
 class ConnectionManager:
@@ -158,7 +286,7 @@ class ConnectionManager:
             self.disconnect(user_id, ws)
 
     async def broadcast_chat(self, chat: models.Chat, payload: dict):
-        if chat.is_public and not chat.is_direct:
+        if chat.is_public and not chat.is_direct and not chat.password_hash:
             targets = list(self.active_connections.keys())
         else:
             targets = list({member.user_id for member in chat.members})
@@ -181,10 +309,16 @@ def register(data: UserCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
 
+    nickname_color = safe_trim(data.nickname_color) or "#4f8cff"
+
     user = models.User(
         username=username,
         password_hash=hash_password(data.password),
-        avatar_url=(data.avatar_url or "").strip() or None,
+        first_name=safe_trim(data.first_name),
+        last_name=safe_trim(data.last_name),
+        nickname_color=nickname_color,
+        avatar_url=None,
+        avatar_path=None,
     )
     db.add(user)
     db.commit()
@@ -207,13 +341,47 @@ def me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
 
-@app.put("/me/avatar", response_model=UserOut)
-def update_avatar(
-    payload: AvatarUpdate,
+@app.put("/me/profile", response_model=UserOut)
+def update_profile(
+    payload: ProfileUpdate,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    current_user.avatar_url = (payload.avatar_url or "").strip() or None
+    if payload.first_name is not None:
+        current_user.first_name = safe_trim(payload.first_name)
+
+    if payload.last_name is not None:
+        current_user.last_name = safe_trim(payload.last_name)
+
+    if payload.nickname_color is not None:
+        current_user.nickname_color = safe_trim(payload.nickname_color) or "#4f8cff"
+
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+@app.post("/me/avatar", response_model=UserOut)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    ext = file_extension(file.filename)
+    if ext not in ALLOWED_AVATAR_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported avatar format")
+
+    content = await file.read()
+    if len(content) > MAX_AVATAR_SIZE:
+        raise HTTPException(status_code=400, detail="Avatar must be <= 512 KB")
+
+    filename = save_bytes_to_file(AVATAR_DIR, content, ext)
+    avatar_url = f"/static/avatars/{filename}"
+
+    current_user.avatar_path = avatar_url
+    current_user.avatar_url = avatar_url
+
     db.add(current_user)
     db.commit()
     db.refresh(current_user)
@@ -261,7 +429,7 @@ def list_chats(
         .all()
     )
 
-    return [serialize_chat(chat, current_user.id) for chat in chats]
+    return [serialize_chat(chat, current_user.id, db) for chat in chats]
 
 
 @app.post("/chats", response_model=ChatOut)
@@ -270,7 +438,7 @@ def create_chat(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    title = data.title.strip()
+    title = (data.title or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Chat title is required")
 
@@ -278,11 +446,14 @@ def create_chat(
         if data.create_password != "315146":
             raise HTTPException(status_code=403, detail="Wrong password for public chat creation")
 
+    chat_password = safe_trim(data.chat_password)
+
     chat = models.Chat(
         title=title,
         is_direct=False,
-        is_public=data.is_public,
+        is_public=bool(data.is_public),
         created_by_id=current_user.id,
+        password_hash=hash_password(chat_password) if chat_password else None,
     )
     db.add(chat)
     db.commit()
@@ -301,7 +472,38 @@ def create_chat(
         .first()
     )
 
-    return serialize_chat(chat, current_user.id)
+    return serialize_chat(chat, current_user.id, db)
+
+
+@app.post("/chats/{chat_id}/join")
+def join_chat(
+    chat_id: int,
+    data: ChatJoinRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    chat = (
+        db.query(models.Chat)
+        .options(joinedload(models.Chat.members).joinedload(models.ChatMember.user))
+        .filter(models.Chat.id == chat_id)
+        .first()
+    )
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    if chat.is_direct:
+        raise HTTPException(status_code=400, detail="Direct chat cannot be joined this way")
+
+    if is_chat_member(db, chat.id, current_user.id):
+        return {"ok": True, "joined": True}
+
+    if chat.password_hash:
+        password = (data.password or "").strip()
+        if not password or not verify_password(password, chat.password_hash):
+            raise HTTPException(status_code=403, detail="Wrong chat password")
+
+    ensure_member(db, chat.id, current_user.id)
+    return {"ok": True, "joined": True}
 
 
 @app.post("/direct-chats", response_model=ChatOut)
@@ -327,13 +529,14 @@ def create_direct_chat(
     for chat in direct_chats:
         member_ids = sorted(member.user_id for member in chat.members)
         if member_ids == sorted([current_user.id, data.user_id]):
-            return serialize_chat(chat, current_user.id)
+            return serialize_chat(chat, current_user.id, db)
 
     chat = models.Chat(
         title=None,
         is_direct=True,
         is_public=False,
         created_by_id=current_user.id,
+        password_hash=None,
     )
     db.add(chat)
     db.commit()
@@ -357,7 +560,7 @@ def create_direct_chat(
         .first()
     )
 
-    return serialize_chat(chat, current_user.id)
+    return serialize_chat(chat, current_user.id, db)
 
 
 @app.get("/chats/{chat_id}/messages", response_model=list[MessageOut])
@@ -373,7 +576,7 @@ def get_messages(
     if not can_access_chat(db, current_user.id, chat):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    if chat.is_public and not chat.is_direct:
+    if chat.is_public and not chat.is_direct and not chat.password_hash:
         ensure_member(db, chat.id, current_user.id)
 
     messages = (
@@ -387,6 +590,30 @@ def get_messages(
     return [serialize_message(msg) for msg in messages]
 
 
+@app.post("/media/upload")
+async def upload_media(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    ext = file_extension(file.filename)
+    if ext not in ALLOWED_MEDIA_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported media format")
+
+    content = await file.read()
+    if len(content) > MAX_MEDIA_SIZE:
+        raise HTTPException(status_code=400, detail="Media must be <= 20 MB")
+
+    filename = save_bytes_to_file(MEDIA_DIR, content, ext)
+    media_url = f"/static/media/{filename}"
+
+    return {
+        "media_url": media_url,
+        "media_type": file.content_type or "application/octet-stream",
+        "original_name": file.filename,
+    }
+
+
 @app.post("/chats/{chat_id}/messages", response_model=MessageOut)
 async def create_message(
     chat_id: int,
@@ -396,9 +623,7 @@ async def create_message(
 ):
     chat = (
         db.query(models.Chat)
-        .options(
-            joinedload(models.Chat.members).joinedload(models.ChatMember.user),
-        )
+        .options(joinedload(models.Chat.members).joinedload(models.ChatMember.user))
         .filter(models.Chat.id == chat_id)
         .first()
     )
@@ -408,7 +633,7 @@ async def create_message(
     if not can_access_chat(db, current_user.id, chat):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    if chat.is_public and not chat.is_direct:
+    if chat.is_public and not chat.is_direct and not chat.password_hash:
         ensure_member(db, chat.id, current_user.id)
         chat = (
             db.query(models.Chat)
@@ -417,11 +642,20 @@ async def create_message(
             .first()
         )
 
-    content = data.content.strip()
-    if not content:
+    content = (data.content or "").strip()
+    media_url = safe_trim(data.media_url)
+    media_type = safe_trim(data.media_type)
+
+    if not content and not media_url:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    message = models.Message(chat_id=chat_id, user_id=current_user.id, content=content)
+    message = models.Message(
+        chat_id=chat_id,
+        user_id=current_user.id,
+        content=content or "",
+        media_url=media_url,
+        media_type=media_type,
+    )
     db.add(message)
     db.commit()
     db.refresh(message)
