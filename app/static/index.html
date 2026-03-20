@@ -233,12 +233,6 @@
       flex-shrink: 0;
     }
 
-    .message .avatar {
-      width: 26px;
-      height: 26px;
-      font-size: 12px;
-    }
-
     .profile-name {
       font-weight: 700;
     }
@@ -302,12 +296,7 @@
       <div id="chatControls" class="card hidden">
         <h3>Создать общий чат</h3>
         <input id="chatTitle" placeholder="Название чата" />
-        <input
-          id="createPassword"
-          type="password"
-          placeholder="Пароль на создание общего чата"
-          value="315146"
-        />
+        <input id="createPassword" type="password" placeholder="Пароль на создание общего чата" />
         <button id="createChatBtn">Создать общий чат</button>
       </div>
 
@@ -349,6 +338,7 @@
       ws: null,
       typingStopTimer: null,
       remoteTypingTimers: {},
+      renderedMessageIds: new Set(),
     };
 
     const els = {
@@ -409,17 +399,16 @@
       }
     }
 
-    function avatarHtml(user, small = false) {
+    function avatarHtml(user) {
       const name = (user?.username || "?").trim();
       const first = name ? name[0].toUpperCase() : "?";
-      const sizeClass = small ? "small-avatar" : "";
       const safeUrl = user?.avatar_url ? String(user.avatar_url).replace(/'/g, "%27") : "";
 
       if (safeUrl) {
-        return `<div class="avatar ${sizeClass}" style="background-image:url('${safeUrl}')"></div>`;
+        return `<div class="avatar" style="background-image:url('${safeUrl}')"></div>`;
       }
 
-      return `<div class="avatar ${sizeClass}">${escapeHtml(first)}</div>`;
+      return `<div class="avatar">${escapeHtml(first)}</div>`;
     }
 
     function renderMyProfile() {
@@ -446,10 +435,10 @@
       els.usersBlock.classList.add("hidden");
       els.chatsBlock.classList.add("hidden");
       els.composer.classList.add("hidden");
-
       els.chatHeaderTitle.textContent = "Выбери чат";
       els.typingIndicator.textContent = "";
       els.messages.innerHTML = `<div class="system-note">Слева войди или зарегистрируйся, потом выбери чат.</div>`;
+      state.renderedMessageIds.clear();
     }
 
     function showLoggedInUI() {
@@ -510,7 +499,6 @@
 
         state.token = data.access_token;
         localStorage.setItem("token", state.token);
-
         await bootstrapAfterLogin();
       } catch (error) {
         alert(error.message);
@@ -518,9 +506,7 @@
     }
 
     async function loadMe() {
-      state.me = await api("/me", {
-        headers: authHeaders(),
-      });
+      state.me = await api("/me", { headers: authHeaders() });
     }
 
     async function saveAvatar() {
@@ -542,16 +528,12 @@
     }
 
     async function loadUsers() {
-      state.users = await api("/users", {
-        headers: authHeaders(),
-      });
+      state.users = await api("/users", { headers: authHeaders() });
       renderUsers();
     }
 
     async function loadChats() {
-      state.chats = await api("/chats", {
-        headers: authHeaders(),
-      });
+      state.chats = await api("/chats", { headers: authHeaders() });
       renderChats();
     }
 
@@ -658,28 +640,37 @@
     }
 
     function renderMessages(messages) {
+      state.renderedMessageIds.clear();
+
       if (!messages.length) {
         els.messages.innerHTML = `<div class="empty">Сообщений пока нет</div>`;
         return;
       }
 
-      els.messages.innerHTML = messages.map(msg => `
-        <div class="message">
-          <div class="message-header">
-            ${avatarHtml(msg.user)}
-            <strong>${escapeHtml(msg.user.username)}</strong>
-            <span>${escapeHtml(formatDate(msg.created_at))}</span>
+      els.messages.innerHTML = messages.map(msg => {
+        state.renderedMessageIds.add(msg.id);
+        return `
+          <div class="message" data-message-id="${msg.id}">
+            <div class="message-header">
+              ${avatarHtml(msg.user)}
+              <strong>${escapeHtml(msg.user.username)}</strong>
+              <span>${escapeHtml(formatDate(msg.created_at))}</span>
+            </div>
+            <div class="message-bubble">
+              <div class="message-content">${escapeHtml(msg.content)}</div>
+            </div>
           </div>
-          <div class="message-bubble">
-            <div class="message-content">${escapeHtml(msg.content)}</div>
-          </div>
-        </div>
-      `).join("");
+        `;
+      }).join("");
 
       els.messages.scrollTop = els.messages.scrollHeight;
     }
 
     function appendMessage(msg) {
+      if (!msg || state.renderedMessageIds.has(msg.id)) {
+        return;
+      }
+
       const empty = els.messages.querySelector(".empty");
       const systemNote = els.messages.querySelector(".system-note");
 
@@ -687,8 +678,11 @@
         els.messages.innerHTML = "";
       }
 
+      state.renderedMessageIds.add(msg.id);
+
       const div = document.createElement("div");
       div.className = "message";
+      div.dataset.messageId = msg.id;
       div.innerHTML = `
         <div class="message-header">
           ${avatarHtml(msg.user)}
@@ -711,14 +705,16 @@
       if (!content) return;
 
       try {
-        await api(`/chats/${state.currentChatId}/messages`, {
+        const message = await api(`/chats/${state.currentChatId}/messages`, {
           method: "POST",
           headers: authHeaders(),
           body: JSON.stringify({ content }),
         });
 
+        appendMessage(message);
         els.messageInput.value = "";
         sendTyping(false);
+        await loadChats();
       } catch (error) {
         alert(error.message);
       }
@@ -773,7 +769,7 @@
         if (data.type === "message") {
           await loadChats();
 
-          if (data.chat_id === state.currentChatId) {
+          if (Number(data.chat_id) === Number(state.currentChatId)) {
             appendMessage(data.message);
           }
 
@@ -786,7 +782,7 @@
         if (data.type === "typing") {
           if (!state.me) return;
           if (data.user.id === state.me.id) return;
-          if (data.chat_id !== state.currentChatId) return;
+          if (Number(data.chat_id) !== Number(state.currentChatId)) return;
 
           if (data.is_typing) {
             els.typingIndicator.textContent = `${data.user.username} печатает...`;
@@ -842,6 +838,7 @@
       state.chats = [];
       state.users = [];
       state.currentChatId = null;
+      state.renderedMessageIds.clear();
 
       if (state.ws) {
         try {
