@@ -63,7 +63,8 @@
       margin-top: 10px;
     }
 
-    input, button {
+    input,
+    button {
       width: 100%;
       border-radius: 10px;
       border: 1px solid #334155;
@@ -248,6 +249,14 @@
       padding: 8px 0;
     }
 
+    .system-note {
+      padding: 10px 12px;
+      border: 1px dashed #334155;
+      border-radius: 10px;
+      color: #94a3b8;
+      display: inline-block;
+    }
+
     @media (max-width: 900px) {
       .app-shell {
         grid-template-columns: 1fr;
@@ -293,7 +302,12 @@
       <div id="chatControls" class="card hidden">
         <h3>Создать общий чат</h3>
         <input id="chatTitle" placeholder="Название чата" />
-        <input id="createPassword" type="password" placeholder="Пароль на создание общего чата" value="315146" />
+        <input
+          id="createPassword"
+          type="password"
+          placeholder="Пароль на создание общего чата"
+          value="315146"
+        />
         <button id="createChatBtn">Создать общий чат</button>
       </div>
 
@@ -309,12 +323,14 @@
     </aside>
 
     <main class="main">
-      <div id="chatHeader" class="chat-header">
-        <div class="chat-header-title">Выбери чат</div>
+      <div class="chat-header">
+        <div id="chatHeaderTitle" class="chat-header-title">Выбери чат</div>
         <div id="typingIndicator" class="typing"></div>
       </div>
 
-      <div id="messages" class="messages"></div>
+      <div id="messages" class="messages">
+        <div class="system-note">Слева войди или зарегистрируйся, потом выбери чат.</div>
+      </div>
 
       <div id="composer" class="composer hidden">
         <input id="messageInput" placeholder="Напиши сообщение..." />
@@ -324,7 +340,557 @@
   </div>
 
   <script>
-    // Add JavaScript code for functionality here (same as in previous message)
+    const state = {
+      token: localStorage.getItem("token") || "",
+      me: null,
+      chats: [],
+      users: [],
+      currentChatId: null,
+      ws: null,
+      typingStopTimer: null,
+      remoteTypingTimers: {},
+    };
+
+    const els = {
+      authBlock: document.getElementById("authBlock"),
+      profileBlock: document.getElementById("profileBlock"),
+      chatControls: document.getElementById("chatControls"),
+      usersBlock: document.getElementById("usersBlock"),
+      chatsBlock: document.getElementById("chatsBlock"),
+
+      username: document.getElementById("username"),
+      password: document.getElementById("password"),
+      avatarUrl: document.getElementById("avatarUrl"),
+      loginBtn: document.getElementById("loginBtn"),
+      registerBtn: document.getElementById("registerBtn"),
+
+      myAvatar: document.getElementById("myAvatar"),
+      myUsername: document.getElementById("myUsername"),
+      newAvatarUrl: document.getElementById("newAvatarUrl"),
+      saveAvatarBtn: document.getElementById("saveAvatarBtn"),
+      logoutBtn: document.getElementById("logoutBtn"),
+
+      chatTitle: document.getElementById("chatTitle"),
+      createPassword: document.getElementById("createPassword"),
+      createChatBtn: document.getElementById("createChatBtn"),
+
+      usersList: document.getElementById("usersList"),
+      chatsList: document.getElementById("chatsList"),
+
+      chatHeaderTitle: document.getElementById("chatHeaderTitle"),
+      typingIndicator: document.getElementById("typingIndicator"),
+      messages: document.getElementById("messages"),
+      composer: document.getElementById("composer"),
+      messageInput: document.getElementById("messageInput"),
+      sendBtn: document.getElementById("sendBtn"),
+    };
+
+    function authHeaders() {
+      return {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${state.token}`,
+      };
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatDate(value) {
+      try {
+        return new Date(value).toLocaleString("ru-RU");
+      } catch {
+        return value;
+      }
+    }
+
+    function avatarHtml(user, small = false) {
+      const name = (user?.username || "?").trim();
+      const first = name ? name[0].toUpperCase() : "?";
+      const sizeClass = small ? "small-avatar" : "";
+      const safeUrl = user?.avatar_url ? String(user.avatar_url).replace(/'/g, "%27") : "";
+
+      if (safeUrl) {
+        return `<div class="avatar ${sizeClass}" style="background-image:url('${safeUrl}')"></div>`;
+      }
+
+      return `<div class="avatar ${sizeClass}">${escapeHtml(first)}</div>`;
+    }
+
+    function renderMyProfile() {
+      if (!state.me) return;
+
+      els.myUsername.textContent = state.me.username;
+      const first = (state.me.username || "?")[0]?.toUpperCase() || "?";
+
+      if (state.me.avatar_url) {
+        els.myAvatar.style.backgroundImage = `url('${state.me.avatar_url.replace(/'/g, "%27")}')`;
+        els.myAvatar.textContent = "";
+      } else {
+        els.myAvatar.style.backgroundImage = "";
+        els.myAvatar.textContent = first;
+      }
+
+      els.newAvatarUrl.value = state.me.avatar_url || "";
+    }
+
+    function showLoggedOutUI() {
+      els.authBlock.classList.remove("hidden");
+      els.profileBlock.classList.add("hidden");
+      els.chatControls.classList.add("hidden");
+      els.usersBlock.classList.add("hidden");
+      els.chatsBlock.classList.add("hidden");
+      els.composer.classList.add("hidden");
+
+      els.chatHeaderTitle.textContent = "Выбери чат";
+      els.typingIndicator.textContent = "";
+      els.messages.innerHTML = `<div class="system-note">Слева войди или зарегистрируйся, потом выбери чат.</div>`;
+    }
+
+    function showLoggedInUI() {
+      els.authBlock.classList.add("hidden");
+      els.profileBlock.classList.remove("hidden");
+      els.chatControls.classList.remove("hidden");
+      els.usersBlock.classList.remove("hidden");
+      els.chatsBlock.classList.remove("hidden");
+      renderMyProfile();
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      const text = await response.text();
+      let data = {};
+
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { detail: text || "Invalid server response" };
+      }
+
+      if (!response.ok) {
+        throw new Error(data.detail || `HTTP ${response.status}`);
+      }
+
+      return data;
+    }
+
+    async function register() {
+      try {
+        const data = await api("/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: els.username.value.trim(),
+            password: els.password.value,
+            avatar_url: els.avatarUrl.value.trim() || null,
+          }),
+        });
+
+        alert(`Пользователь ${data.username} зарегистрирован`);
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+
+    async function login() {
+      try {
+        const data = await api("/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: els.username.value.trim(),
+            password: els.password.value,
+          }),
+        });
+
+        state.token = data.access_token;
+        localStorage.setItem("token", state.token);
+
+        await bootstrapAfterLogin();
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+
+    async function loadMe() {
+      state.me = await api("/me", {
+        headers: authHeaders(),
+      });
+    }
+
+    async function saveAvatar() {
+      try {
+        state.me = await api("/me/avatar", {
+          method: "PUT",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            avatar_url: els.newAvatarUrl.value.trim() || null,
+          }),
+        });
+
+        renderMyProfile();
+        await loadUsers();
+        await loadChats();
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+
+    async function loadUsers() {
+      state.users = await api("/users", {
+        headers: authHeaders(),
+      });
+      renderUsers();
+    }
+
+    async function loadChats() {
+      state.chats = await api("/chats", {
+        headers: authHeaders(),
+      });
+      renderChats();
+    }
+
+    function renderUsers() {
+      if (!state.users.length) {
+        els.usersList.innerHTML = `<div class="empty">Пока нет других пользователей</div>`;
+        return;
+      }
+
+      els.usersList.innerHTML = state.users.map(user => `
+        <div class="user-item" data-user-id="${user.id}">
+          <div class="user-line">
+            ${avatarHtml(user)}
+            <div>
+              <div>${escapeHtml(user.username)}</div>
+              <div class="user-meta">Нажми для лички</div>
+            </div>
+          </div>
+        </div>
+      `).join("");
+
+      els.usersList.querySelectorAll(".user-item").forEach(item => {
+        item.addEventListener("click", async () => {
+          const userId = Number(item.dataset.userId);
+
+          try {
+            const chat = await api("/direct-chats", {
+              method: "POST",
+              headers: authHeaders(),
+              body: JSON.stringify({ user_id: userId }),
+            });
+
+            await loadChats();
+            await openChat(chat.id);
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+      });
+    }
+
+    function renderChats() {
+      if (!state.chats.length) {
+        els.chatsList.innerHTML = `<div class="empty">Чатов пока нет</div>`;
+        return;
+      }
+
+      els.chatsList.innerHTML = state.chats.map(chat => `
+        <div class="chat-item ${state.currentChatId === chat.id ? "active" : ""}" data-chat-id="${chat.id}">
+          <div class="chat-title">${escapeHtml(chat.title)}</div>
+          <div class="chat-meta">${chat.is_direct ? "Личка" : "Общий чат"}</div>
+          <div class="chat-meta">
+            ${chat.last_message
+              ? escapeHtml(`${chat.last_message.user.username}: ${chat.last_message.content}`)
+              : "Без сообщений"}
+          </div>
+        </div>
+      `).join("");
+
+      els.chatsList.querySelectorAll(".chat-item").forEach(item => {
+        item.addEventListener("click", () => {
+          openChat(Number(item.dataset.chatId));
+        });
+      });
+    }
+
+    async function createPublicChat() {
+      try {
+        const chat = await api("/chats", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            title: els.chatTitle.value.trim(),
+            is_public: true,
+            create_password: els.createPassword.value,
+          }),
+        });
+
+        els.chatTitle.value = "";
+        await loadChats();
+        await openChat(chat.id);
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+
+    async function openChat(chatId) {
+      state.currentChatId = chatId;
+      renderChats();
+
+      const chat = state.chats.find(c => c.id === chatId);
+      els.chatHeaderTitle.textContent = chat ? chat.title : `Чат #${chatId}`;
+      els.typingIndicator.textContent = "";
+      els.composer.classList.remove("hidden");
+
+      try {
+        const messages = await api(`/chats/${chatId}/messages`, {
+          headers: authHeaders(),
+        });
+        renderMessages(messages);
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+
+    function renderMessages(messages) {
+      if (!messages.length) {
+        els.messages.innerHTML = `<div class="empty">Сообщений пока нет</div>`;
+        return;
+      }
+
+      els.messages.innerHTML = messages.map(msg => `
+        <div class="message">
+          <div class="message-header">
+            ${avatarHtml(msg.user)}
+            <strong>${escapeHtml(msg.user.username)}</strong>
+            <span>${escapeHtml(formatDate(msg.created_at))}</span>
+          </div>
+          <div class="message-bubble">
+            <div class="message-content">${escapeHtml(msg.content)}</div>
+          </div>
+        </div>
+      `).join("");
+
+      els.messages.scrollTop = els.messages.scrollHeight;
+    }
+
+    function appendMessage(msg) {
+      const empty = els.messages.querySelector(".empty");
+      const systemNote = els.messages.querySelector(".system-note");
+
+      if (empty || systemNote) {
+        els.messages.innerHTML = "";
+      }
+
+      const div = document.createElement("div");
+      div.className = "message";
+      div.innerHTML = `
+        <div class="message-header">
+          ${avatarHtml(msg.user)}
+          <strong>${escapeHtml(msg.user.username)}</strong>
+          <span>${escapeHtml(formatDate(msg.created_at))}</span>
+        </div>
+        <div class="message-bubble">
+          <div class="message-content">${escapeHtml(msg.content)}</div>
+        </div>
+      `;
+
+      els.messages.appendChild(div);
+      els.messages.scrollTop = els.messages.scrollHeight;
+    }
+
+    async function sendMessage() {
+      if (!state.currentChatId) return;
+
+      const content = els.messageInput.value.trim();
+      if (!content) return;
+
+      try {
+        await api(`/chats/${state.currentChatId}/messages`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ content }),
+        });
+
+        els.messageInput.value = "";
+        sendTyping(false);
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+
+    function playBeep() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.type = "sine";
+        osc.frequency.value = 900;
+        gain.gain.value = 0.02;
+
+        osc.start();
+        osc.stop(ctx.currentTime + 0.08);
+      } catch (_) {}
+    }
+
+    function showBrowserNotification(title, body) {
+      if (!("Notification" in window)) return;
+      if (document.hasFocus()) return;
+      if (Notification.permission !== "granted") return;
+
+      try {
+        new Notification(title, { body });
+      } catch (_) {}
+    }
+
+    function connectWs() {
+      if (!state.token) return;
+
+      if (state.ws) {
+        try {
+          state.ws.close();
+        } catch (_) {}
+      }
+
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      state.ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(state.token)}`);
+
+      state.ws.onmessage = async (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "message") {
+          await loadChats();
+
+          if (data.chat_id === state.currentChatId) {
+            appendMessage(data.message);
+          }
+
+          if (state.me && data.message.user.id !== state.me.id) {
+            playBeep();
+            showBrowserNotification(data.message.user.username, data.message.content);
+          }
+        }
+
+        if (data.type === "typing") {
+          if (!state.me) return;
+          if (data.user.id === state.me.id) return;
+          if (data.chat_id !== state.currentChatId) return;
+
+          if (data.is_typing) {
+            els.typingIndicator.textContent = `${data.user.username} печатает...`;
+
+            clearTimeout(state.remoteTypingTimers[data.user.id]);
+            state.remoteTypingTimers[data.user.id] = setTimeout(() => {
+              els.typingIndicator.textContent = "";
+            }, 1500);
+          } else {
+            els.typingIndicator.textContent = "";
+          }
+        }
+      };
+
+      state.ws.onclose = () => {
+        setTimeout(() => {
+          if (state.token) {
+            connectWs();
+          }
+        }, 1500);
+      };
+    }
+
+    function sendTyping(isTyping) {
+      if (!state.ws) return;
+      if (state.ws.readyState !== WebSocket.OPEN) return;
+      if (!state.currentChatId) return;
+
+      state.ws.send(JSON.stringify({
+        type: "typing",
+        chat_id: state.currentChatId,
+        is_typing: isTyping,
+      }));
+    }
+
+    function handleTyping() {
+      sendTyping(true);
+
+      if (state.typingStopTimer) {
+        clearTimeout(state.typingStopTimer);
+      }
+
+      state.typingStopTimer = setTimeout(() => {
+        sendTyping(false);
+      }, 900);
+    }
+
+    function logout() {
+      localStorage.removeItem("token");
+
+      state.token = "";
+      state.me = null;
+      state.chats = [];
+      state.users = [];
+      state.currentChatId = null;
+
+      if (state.ws) {
+        try {
+          state.ws.close();
+        } catch (_) {}
+      }
+
+      state.ws = null;
+      showLoggedOutUI();
+    }
+
+    async function bootstrapAfterLogin() {
+      try {
+        await loadMe();
+        showLoggedInUI();
+        connectWs();
+        await Promise.all([loadUsers(), loadChats()]);
+
+        if ("Notification" in window && Notification.permission === "default") {
+          Notification.requestPermission().catch(() => {});
+        }
+      } catch (error) {
+        console.error(error);
+        logout();
+      }
+    }
+
+    els.registerBtn.addEventListener("click", register);
+    els.loginBtn.addEventListener("click", login);
+    els.saveAvatarBtn.addEventListener("click", saveAvatar);
+    els.logoutBtn.addEventListener("click", logout);
+    els.createChatBtn.addEventListener("click", createPublicChat);
+    els.sendBtn.addEventListener("click", sendMessage);
+
+    els.messageInput.addEventListener("input", handleTyping);
+    els.messageInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+
+    (async function init() {
+      if (state.token) {
+        await bootstrapAfterLogin();
+      } else {
+        showLoggedOutUI();
+      }
+    })();
   </script>
 </body>
 </html>
