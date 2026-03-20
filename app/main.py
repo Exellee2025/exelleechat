@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -11,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth import create_access_token, decode_access_token, hash_password, verify_password
-from app.database import Base, engine, get_db
+from app.database import Base, engine, get_db, SessionLocal
 from app.schemas import (
     AvatarUpdate,
     ChatCreate,
@@ -30,9 +29,10 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI()
 security = HTTPBearer(auto_error=False)
 
-BUILD_DIR = Path("build")
-if BUILD_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=BUILD_DIR), name="assets")
+STATIC_DIR = Path("app/static")
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 def get_current_user(
@@ -49,6 +49,7 @@ def get_current_user(
     user = db.query(models.User).filter(models.User.id == int(payload["sub"])).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+
     return user
 
 
@@ -71,10 +72,6 @@ def serialize_message(message: models.Message) -> dict:
     }
 
 
-def get_chat_members(chat: models.Chat) -> list[models.User]:
-    return [member.user for member in chat.members]
-
-
 def build_chat_title(chat: models.Chat, current_user_id: int) -> str:
     if not chat.is_direct:
         return chat.title or f"Чат #{chat.id}"
@@ -89,7 +86,10 @@ def can_access_chat(db: Session, user_id: int, chat: models.Chat) -> bool:
 
     membership = (
         db.query(models.ChatMember)
-        .filter(models.ChatMember.chat_id == chat.id, models.ChatMember.user_id == user_id)
+        .filter(
+            models.ChatMember.chat_id == chat.id,
+            models.ChatMember.user_id == user_id,
+        )
         .first()
     )
     return membership is not None
@@ -98,7 +98,10 @@ def can_access_chat(db: Session, user_id: int, chat: models.Chat) -> bool:
 def ensure_member(db: Session, chat_id: int, user_id: int):
     membership = (
         db.query(models.ChatMember)
-        .filter(models.ChatMember.chat_id == chat_id, models.ChatMember.user_id == user_id)
+        .filter(
+            models.ChatMember.chat_id == chat_id,
+            models.ChatMember.user_id == user_id,
+        )
         .first()
     )
     if not membership:
@@ -144,9 +147,7 @@ class ConnectionManager:
         for ws in self.active_connections.get(user_id, []):
             await ws.send_json(payload)
 
-    async def broadcast_chat(self, db: Session, chat: models.Chat, payload: dict):
-        targets: set[int] = set()
-
+    async def broadcast_chat(self, chat: models.Chat, payload: dict):
         if chat.is_public and not chat.is_direct:
             targets = set(self.active_connections.keys())
         else:
@@ -162,6 +163,7 @@ manager = ConnectionManager()
 @app.post("/register", response_model=UserOut)
 def register(data: UserCreate, db: Session = Depends(get_db)):
     username = data.username.strip()
+
     if len(username) < 3:
         raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
 
@@ -259,7 +261,7 @@ def create_chat(
     current_user: models.User = Depends(get_current_user),
 ):
     title = data.title.strip()
-    if len(title) < 1:
+    if not title:
         raise HTTPException(status_code=400, detail="Chat title is required")
 
     if data.is_public:
@@ -313,7 +315,7 @@ def create_direct_chat(
     )
 
     for chat in direct_chats:
-        member_ids = sorted([member.user_id for member in chat.members])
+        member_ids = sorted(member.user_id for member in chat.members)
         if member_ids == sorted([current_user.id, data.user_id]):
             return serialize_chat(chat, current_user.id)
 
@@ -371,6 +373,7 @@ def get_messages(
         .order_by(models.Message.created_at.asc(), models.Message.id.asc())
         .all()
     )
+
     return [serialize_message(msg) for msg in messages]
 
 
@@ -426,7 +429,7 @@ async def create_message(
         "chat_id": chat_id,
         "message": serialize_message(message),
     }
-    await manager.broadcast_chat(db, chat, payload)
+    await manager.broadcast_chat(chat, payload)
 
     return serialize_message(message)
 
@@ -447,10 +450,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
             event_type = data.get("type")
 
             if event_type == "typing":
-                chat_id = int(data.get("chat_id"))
+                chat_id_raw = data.get("chat_id")
+                if chat_id_raw is None:
+                    continue
+
+                chat_id = int(chat_id_raw)
                 is_typing = bool(data.get("is_typing", False))
 
-                from app.database import SessionLocal
                 db = SessionLocal()
                 try:
                     chat = (
@@ -461,12 +467,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     )
                     if not chat:
                         continue
+
                     if not can_access_chat(db, user_id, chat):
                         continue
 
                     user = db.query(models.User).filter(models.User.id == user_id).first()
+                    if not user:
+                        continue
+
                     await manager.broadcast_chat(
-                        db,
                         chat,
                         {
                             "type": "typing",
@@ -485,7 +494,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
 
 @app.get("/")
 def root():
-    index_path = BUILD_DIR / "index.html"
+    index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
     return {"status": "ok"}
@@ -493,10 +502,11 @@ def root():
 
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):
-    if full_path.startswith("ws") or full_path.startswith("api"):
+    if full_path.startswith("ws"):
         raise HTTPException(status_code=404, detail="Not found")
 
-    index_path = BUILD_DIR / "index.html"
+    index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
+
     raise HTTPException(status_code=404, detail="Frontend not found")
