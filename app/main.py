@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Set
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
@@ -26,7 +27,7 @@ Base.metadata.create_all(bind=engine)
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(APP_DIR)
-INDEX_PATH = os.path.join(PROJECT_ROOT, "index.html")
+FLUTTER_BUILD_DIR = os.path.join(PROJECT_ROOT, "build", "web")
 
 app = FastAPI(title="Exellee Chat")
 
@@ -144,11 +145,7 @@ class ConnectionManager:
             self.chat_connections[chat_id].remove(websocket)
             if not self.chat_connections[chat_id]:
                 del self.chat_connections[chat_id]
-
-        still_connected = any(websocket in sockets for sockets in self.chat_connections.values())
-        if not still_connected:
-            # простой режим, без точного подсчета нескольких вкладок одного юзера
-            self.online_users.discard(user_id)
+        self.online_users.discard(user_id)
 
     async def broadcast(self, chat_id: int, payload: dict):
         if chat_id not in self.chat_connections:
@@ -174,13 +171,6 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-
-
-@app.get("/")
-def root():
-    if os.path.exists(INDEX_PATH):
-        return FileResponse(INDEX_PATH)
-    return {"status": "ok", "message": "index.html not found"}
 
 
 @app.get("/health")
@@ -253,9 +243,8 @@ def create_chat(
     if not title:
         raise HTTPException(status_code=400, detail="Chat title cannot be empty")
 
-    if chat.is_public:
-        if chat.creation_password != PUBLIC_CHAT_CREATION_PASSWORD:
-            raise HTTPException(status_code=403, detail="Wrong creation password")
+    if chat.is_public and chat.creation_password != PUBLIC_CHAT_CREATION_PASSWORD:
+        raise HTTPException(status_code=403, detail="Wrong creation password")
 
     new_chat = models.Chat(
         title=title,
@@ -444,3 +433,43 @@ async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str = Qu
             except Exception:
                 pass
         db.close()
+
+
+if os.path.isdir(FLUTTER_BUILD_DIR):
+    assets_dir = os.path.join(FLUTTER_BUILD_DIR, "assets")
+    canvaskit_dir = os.path.join(FLUTTER_BUILD_DIR, "canvaskit")
+    icons_dir = os.path.join(FLUTTER_BUILD_DIR, "icons")
+
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    if os.path.isdir(canvaskit_dir):
+        app.mount("/canvaskit", StaticFiles(directory=canvaskit_dir), name="canvaskit")
+    if os.path.isdir(icons_dir):
+        app.mount("/icons", StaticFiles(directory=icons_dir), name="icons")
+
+
+@app.get("/")
+def serve_root():
+    index_file = os.path.join(FLUTTER_BUILD_DIR, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return {
+        "status": "error",
+        "message": "Flutter web build not found. Run: flutter build web"
+    }
+
+
+@app.get("/{full_path:path}")
+def serve_flutter(full_path: str):
+    if full_path.startswith("docs") or full_path.startswith("openapi.json"):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    file_path = os.path.join(FLUTTER_BUILD_DIR, full_path)
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+
+    index_file = os.path.join(FLUTTER_BUILD_DIR, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+
+    raise HTTPException(status_code=404, detail="Flutter web build not found")
