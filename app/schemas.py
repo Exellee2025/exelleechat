@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -80,5 +80,5 @@ class ChatOut(BaseModel):
     requires_password: bool
     joined: bool
     created_at: datetime
-    members: List[UserOut] = []
+    members: list[UserOut]
     last_message: Optional[MessageOut] = None

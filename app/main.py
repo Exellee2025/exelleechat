@@ -2,21 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import (
-    Depends,
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    UploadFile,
-    WebSocket,
-    WebSocketDisconnect,
-)
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
@@ -53,50 +44,19 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 ALLOWED_AVATAR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 ALLOWED_MEDIA_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-    ".gif",
-    ".mp4",
-    ".webm",
-    ".mov",
-    ".mp3",
-    ".wav",
-    ".ogg",
-    ".pdf",
-    ".txt",
-    ".zip",
-    ".rar",
+    ".jpg", ".jpeg", ".png", ".webp", ".gif",
+    ".mp4", ".webm", ".mov",
+    ".mp3", ".wav", ".ogg",
+    ".pdf", ".txt", ".zip", ".rar",
 }
 MAX_AVATAR_SIZE = 512 * 1024
 MAX_MEDIA_SIZE = 20 * 1024 * 1024
 MEDIA_TTL_SECONDS = 3600
 MEDIA_CLEANUP_INTERVAL_SECONDS = 300
-
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db),
-):
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Authorization header missing")
-
-    payload = decode_access_token(credentials.credentials)
-    if not payload or "sub" not in payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-    user = db.query(models.User).filter(models.User.id == int(payload["sub"])).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    return user
 
 
 def safe_trim(value: Optional[str]) -> Optional[str]:
@@ -118,48 +78,22 @@ def save_bytes_to_file(directory: Path, content: bytes, ext: str) -> str:
     return filename
 
 
-def serialize_user(user: models.User) -> dict:
-    display_name = " ".join(
-        part for part in [safe_trim(user.first_name), safe_trim(user.last_name)] if part
-    ).strip()
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authorization header missing")
 
-    return {
-        "id": user.id,
-        "username": user.username,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "display_name": display_name or user.username,
-        "avatar_url": user.avatar_url,
-        "nickname_color": user.nickname_color or "#4f8cff",
-        "created_at": user.created_at,
-    }
+    payload = decode_access_token(credentials.credentials)
+    if not payload or "sub" not in payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+    user = db.query(models.User).filter(models.User.id == int(payload["sub"])).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
 
-def serialize_message(message: models.Message) -> dict:
-    return {
-        "id": message.id,
-        "chat_id": message.chat_id,
-        "content": message.content,
-        "media_url": message.media_url,
-        "media_type": message.media_type,
-        "created_at": message.created_at,
-        "user": serialize_user(message.user),
-    }
-
-
-def build_chat_title(chat: models.Chat, current_user_id: int) -> str:
-    if not chat.is_direct:
-        return chat.title or f"Чат #{chat.id}"
-
-    others = [member.user for member in chat.members if member.user_id != current_user_id]
-    if others:
-        other = others[0]
-        display_name = " ".join(
-            part for part in [safe_trim(other.first_name), safe_trim(other.last_name)] if part
-        ).strip()
-        return display_name or other.username
-
-    return chat.title or f"Личка #{chat.id}"
+    return user
 
 
 def is_chat_member(db: Session, chat_id: int, user_id: int) -> bool:
@@ -180,6 +114,49 @@ def ensure_member(db: Session, chat_id: int, user_id: int):
         db.commit()
 
 
+def serialize_user(user: models.User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "avatar_url": user.avatar_url,
+        "avatar_path": user.avatar_path,
+        "nickname_color": user.nickname_color,
+        "created_at": user.created_at,
+    }
+
+
+def serialize_message(message: models.Message) -> dict:
+    return {
+        "id": message.id,
+        "chat_id": message.chat_id,
+        "content": message.content,
+        "media_url": message.media_url,
+        "media_type": message.media_type,
+        "created_at": message.created_at,
+        "user": serialize_user(message.user),
+    }
+
+
+def display_name_for_user(user: models.User) -> str:
+    full_name = " ".join(
+        part for part in [safe_trim(user.first_name), safe_trim(user.last_name)] if part
+    ).strip()
+    return full_name or user.username
+
+
+def build_chat_title(chat: models.Chat, current_user_id: int) -> str:
+    if not chat.is_direct:
+        return chat.title or f"Чат #{chat.id}"
+
+    others = [member.user for member in chat.members if member.user_id != current_user_id]
+    if others:
+        return display_name_for_user(others[0])
+
+    return chat.title or f"Личка #{chat.id}"
+
+
 def can_access_chat(db: Session, user_id: int, chat: models.Chat) -> bool:
     if chat.is_direct:
         return is_chat_member(db, chat.id, user_id)
@@ -193,52 +170,38 @@ def can_access_chat(db: Session, user_id: int, chat: models.Chat) -> bool:
 def serialize_chat(chat: models.Chat, current_user_id: int, db: Session) -> dict:
     last_message = None
     if chat.messages:
-        ordered = sorted(chat.messages, key=lambda x: (x.created_at, x.id), reverse=True)
-        if ordered:
-            last_message = serialize_message(ordered[0])
+      ordered = sorted(chat.messages, key=lambda x: (x.created_at, x.id), reverse=True)
+      if ordered:
+          last_message = serialize_message(ordered[0])
 
-    is_member = is_chat_member(db, chat.id, current_user_id)
-    requires_password = bool(chat.password_hash)
+    joined = is_chat_member(db, chat.id, current_user_id)
+
+    if chat.is_public and not chat.password_hash and not chat.is_direct:
+        joined = True
 
     return {
         "id": chat.id,
         "title": build_chat_title(chat, current_user_id),
         "is_direct": chat.is_direct,
         "is_public": chat.is_public,
-        "requires_password": requires_password,
-        "joined": is_member or (chat.is_public and not requires_password and not chat.is_direct),
+        "requires_password": bool(chat.password_hash),
+        "joined": joined,
         "created_at": chat.created_at,
         "members": [serialize_user(member.user) for member in chat.members],
         "last_message": last_message,
     }
 
 
-def remove_old_media_files():
-    if not MEDIA_DIR.exists():
-        return
-
-    now = int(asyncio.get_event_loop().time())
-    for file_path in MEDIA_DIR.iterdir():
-        try:
-            if not file_path.is_file():
-                continue
-            age = int(asyncio.get_event_loop().time()) - int(file_path.stat().st_mtime)
-            if age > MEDIA_TTL_SECONDS:
-                file_path.unlink(missing_ok=True)
-        except Exception as e:
-            print(f"Media cleanup warning for {file_path}: {e}")
-
-
 async def cleanup_media_loop():
     while True:
         try:
+            now = int(time.time())
             if MEDIA_DIR.exists():
-                current_ts = int(__import__("time").time())
                 for file_path in MEDIA_DIR.iterdir():
                     try:
                         if not file_path.is_file():
                             continue
-                        age = current_ts - int(file_path.stat().st_mtime)
+                        age = now - int(file_path.stat().st_mtime)
                         if age > MEDIA_TTL_SECONDS:
                             file_path.unlink(missing_ok=True)
                     except Exception as e:
@@ -309,14 +272,12 @@ def register(data: UserCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
 
-    nickname_color = safe_trim(data.nickname_color) or "#4f8cff"
-
     user = models.User(
         username=username,
         password_hash=hash_password(data.password),
         first_name=safe_trim(data.first_name),
         last_name=safe_trim(data.last_name),
-        nickname_color=nickname_color,
+        nickname_color=safe_trim(data.nickname_color) or "#4f8cff",
         avatar_url=None,
         avatar_path=None,
     )
@@ -379,8 +340,8 @@ async def upload_avatar(
     filename = save_bytes_to_file(AVATAR_DIR, content, ext)
     avatar_url = f"/static/avatars/{filename}"
 
-    current_user.avatar_path = avatar_url
     current_user.avatar_url = avatar_url
+    current_user.avatar_path = avatar_url
 
     db.add(current_user)
     db.commit()
@@ -442,9 +403,8 @@ def create_chat(
     if not title:
         raise HTTPException(status_code=400, detail="Chat title is required")
 
-    if data.is_public:
-        if data.create_password != "315146":
-            raise HTTPException(status_code=403, detail="Wrong password for public chat creation")
+    if data.is_public and data.create_password != "315146":
+        raise HTTPException(status_code=403, detail="Wrong password for public chat creation")
 
     chat_password = safe_trim(data.chat_password)
 
@@ -722,18 +682,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     if not user:
                         continue
 
-                    try:
-                        await manager.broadcast_chat(
-                            chat,
-                            {
-                                "type": "typing",
-                                "chat_id": chat_id,
-                                "is_typing": is_typing,
-                                "user": serialize_user(user),
-                            },
-                        )
-                    except Exception as e:
-                        print(f"Typing broadcast warning: {e}")
+                    await manager.broadcast_chat(
+                        chat,
+                        {
+                            "type": "typing",
+                            "chat_id": chat_id,
+                            "is_typing": is_typing,
+                            "user": serialize_user(user),
+                        },
+                    )
                 finally:
                     db.close()
             else:

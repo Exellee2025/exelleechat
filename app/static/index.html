@@ -7,81 +7,68 @@
   <style>
     :root {
       --bg: #0b1120;
-      --bg-2: #111827;
-      --panel: #0f172a;
-      --panel-2: #172033;
-      --panel-3: #1e293b;
-      --line: #243041;
-      --line-soft: #334155;
+      --bg2: #0f172a;
+      --panel: #131c2e;
+      --panel2: #182338;
+      --line: #263247;
+      --line2: #334155;
       --text: #f8fafc;
       --muted: #94a3b8;
-      --blue: #2563eb;
-      --blue-2: #3b82f6;
-      --my-bubble: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-      --their-bubble: #1f2937;
-      --danger: #dc2626;
-      --success: #10b981;
-      --shadow: 0 10px 25px rgba(0, 0, 0, 0.24);
+      --accent: #3b82f6;
+      --accent2: #2563eb;
+      --green: #10b981;
+      --red: #ef4444;
+      --bubble-me: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+      --bubble-them: #1f2937;
+      --shadow: 0 10px 30px rgba(0,0,0,.25);
       --radius: 16px;
       --radius-sm: 12px;
-      --sidebar-width: 320px;
-      --header-height: 78px;
-      --composer-height: 76px;
+      --sidebar-width: 330px;
     }
 
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
-    html,
-    body {
+    html, body {
       margin: 0;
       padding: 0;
+      width: 100%;
       height: 100%;
       overflow: hidden;
-      font-family: Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
+      font-family: Arial, sans-serif;
     }
 
-    body {
-      min-height: 100dvh;
-    }
+    .hidden { display: none !important; }
 
-    .hidden {
-      display: none !important;
-    }
-
-    .app-shell {
+    .app {
+      width: 100%;
       height: 100dvh;
       display: grid;
       grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
       background:
-        radial-gradient(circle at top left, rgba(37, 99, 235, 0.08), transparent 25%),
-        radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.08), transparent 22%),
+        radial-gradient(circle at top left, rgba(59,130,246,.08), transparent 25%),
+        radial-gradient(circle at bottom right, rgba(37,99,235,.08), transparent 22%),
         var(--bg);
     }
 
     .sidebar {
-      min-width: 0;
       height: 100dvh;
       overflow-y: auto;
       border-right: 1px solid var(--line);
-      background: rgba(15, 23, 42, 0.94);
-      backdrop-filter: blur(8px);
+      background: rgba(15, 23, 42, .96);
       padding: 14px;
     }
 
     .brand {
       font-size: 24px;
       font-weight: 800;
-      letter-spacing: 0.3px;
-      margin: 2px 2px 14px;
+      margin: 2px 4px 14px;
+      letter-spacing: .2px;
     }
 
     .card {
-      background: linear-gradient(180deg, rgba(23, 32, 51, 0.96), rgba(15, 23, 42, 0.98));
+      background: linear-gradient(180deg, rgba(24,35,56,.98), rgba(15,23,42,.98));
       border: 1px solid var(--line);
       border-radius: 18px;
       padding: 14px;
@@ -92,246 +79,272 @@
     .card h3 {
       margin: 0 0 12px;
       font-size: 15px;
-      font-weight: 700;
-    }
-
-    .flex-grow {
-      flex: 1;
     }
 
     .row {
       display: flex;
       gap: 8px;
-      margin-top: 10px;
     }
 
-    .row.stack-mobile {
-      flex-wrap: wrap;
+    .col {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
-    input,
-    button {
+    input, button, select {
       width: 100%;
-      border-radius: 12px;
-      border: 1px solid var(--line-soft);
-      padding: 11px 12px;
-      font-size: 14px;
       min-height: 44px;
+      border-radius: 12px;
+      font-size: 14px;
     }
 
-    input {
+    input, select {
+      border: 1px solid var(--line2);
       background: #0b1220;
       color: var(--text);
-      margin-top: 8px;
+      padding: 11px 12px;
       outline: none;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
     }
 
-    input:focus {
-      border-color: var(--blue-2);
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
-      background: #0c1425;
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(59,130,246,.15);
     }
 
     button {
-      cursor: pointer;
-      background: linear-gradient(180deg, var(--blue-2), var(--blue));
-      color: white;
       border: none;
-      transition: transform 0.12s ease, opacity 0.15s ease, filter 0.15s ease;
+      cursor: pointer;
+      color: white;
       font-weight: 700;
-    }
-
-    button:hover {
-      filter: brightness(1.04);
-    }
-
-    button:active {
-      transform: translateY(1px);
+      background: linear-gradient(180deg, var(--accent), var(--accent2));
+      padding: 10px 14px;
     }
 
     button.secondary {
       background: linear-gradient(180deg, #64748b, #475569);
     }
 
-    button.danger {
-      background: linear-gradient(180deg, #ef4444, var(--danger));
+    button.green {
+      background: linear-gradient(180deg, #22c55e, #16a34a);
+    }
+
+    button.red {
+      background: linear-gradient(180deg, #ef4444, #dc2626);
+    }
+
+    button:disabled {
+      opacity: .6;
+      cursor: not-allowed;
     }
 
     .main {
-      min-width: 0;
       height: 100dvh;
       display: grid;
-      grid-template-rows: var(--header-height) minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr) auto;
       overflow: hidden;
-      background: linear-gradient(180deg, rgba(17, 24, 39, 0.95), rgba(11, 17, 32, 1));
+      min-width: 0;
     }
 
-    .chat-header {
-      min-width: 0;
+    .topbar {
       border-bottom: 1px solid var(--line);
-      background: rgba(15, 23, 42, 0.95);
+      background: rgba(15,23,42,.95);
       backdrop-filter: blur(8px);
       padding: 14px 18px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      z-index: 3;
+      min-width: 0;
     }
 
-    .chat-header-title {
+    .chat-title {
       font-size: 20px;
       font-weight: 800;
-      white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .typing {
-      font-size: 13px;
-      color: #93c5fd;
       min-height: 18px;
       margin-top: 4px;
+      color: #93c5fd;
+      font-size: 13px;
     }
 
     .messages {
-      min-height: 0;
       overflow-y: auto;
-      overflow-x: hidden;
-      padding: 18px 18px 12px;
+      min-height: 0;
+      padding: 16px;
       display: flex;
       flex-direction: column;
       gap: 10px;
-      scroll-behavior: smooth;
-    }
-
-    .empty-wrap {
-      padding-top: 6px;
-    }
-
-    .empty,
-    .system-note {
-      display: inline-block;
-      max-width: 100%;
-      color: var(--muted);
-      font-size: 14px;
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px dashed var(--line-soft);
-      background: rgba(15, 23, 42, 0.55);
     }
 
     .message {
       display: flex;
-      width: 100%;
-      align-items: flex-end;
       gap: 8px;
+      align-items: flex-end;
+      width: 100%;
     }
 
-    .message.mine {
-      justify-content: flex-end;
-    }
+    .message.mine { justify-content: flex-end; }
+    .message.theirs { justify-content: flex-start; }
 
-    .message.theirs {
-      justify-content: flex-start;
+    .avatar, .message-avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #334155 center/cover no-repeat;
+      color: white;
+      font-weight: 700;
+      border: 1px solid rgba(255,255,255,.08);
+      box-shadow: 0 6px 16px rgba(0,0,0,.2);
     }
 
     .message-avatar {
       width: 34px;
       height: 34px;
-      border-radius: 999px;
-      background: #334155 center/cover no-repeat;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
       font-size: 13px;
-      color: white;
-      flex-shrink: 0;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      align-self: flex-end;
-      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.22);
     }
 
-    .message-stack {
+    .avatar.big {
+      width: 52px;
+      height: 52px;
+      font-size: 18px;
+    }
+
+    .stack {
       max-width: min(78%, 760px);
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 4px;
     }
 
-    .message.mine .message-stack {
-      align-items: flex-end;
-    }
+    .message.mine .stack { align-items: flex-end; }
+    .message.theirs .stack { align-items: flex-start; }
 
-    .message.theirs .message-stack {
-      align-items: flex-start;
-    }
-
-    .message-meta {
+    .meta {
       display: flex;
-      align-items: center;
       gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
       font-size: 12px;
       color: #cbd5e1;
       padding: 0 4px;
-      flex-wrap: wrap;
     }
 
-    .message-author {
+    .author {
       font-weight: 700;
-      color: #e2e8f0;
     }
 
-    .message-time {
+    .time {
       color: var(--muted);
     }
 
-    .message-bubble {
-      display: inline-block;
-      padding: 11px 13px;
+    .bubble {
       border-radius: 18px;
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 11px 13px;
+      border: 1px solid rgba(255,255,255,.06);
       word-break: break-word;
       line-height: 1.4;
-      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+      box-shadow: 0 8px 18px rgba(0,0,0,.14);
     }
 
-    .message.mine .message-bubble {
-      background: var(--my-bubble);
-      color: #fff;
+    .message.mine .bubble {
+      background: var(--bubble-me);
+      color: white;
       border-bottom-right-radius: 6px;
     }
 
-    .message.theirs .message-bubble {
-      background: var(--their-bubble);
+    .message.theirs .bubble {
+      background: var(--bubble-them);
       color: var(--text);
       border-bottom-left-radius: 6px;
     }
 
-    .message-content {
-      white-space: pre-wrap;
-      word-break: break-word;
+    .message-media {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .message-media img,
+    .message-media video {
+      max-width: 260px;
+      width: 100%;
+      border-radius: 12px;
+      display: block;
+      background: #0b1220;
+    }
+
+    .message-media audio {
+      width: 260px;
+      max-width: 100%;
+    }
+
+    .message-media a {
+      color: #bfdbfe;
+      text-decoration: none;
+      word-break: break-all;
+    }
+
+    .message-media a:hover {
+      text-decoration: underline;
+    }
+
+    .system-note {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px dashed var(--line2);
+      background: rgba(15,23,42,.55);
+      display: inline-block;
     }
 
     .composer {
-      min-width: 0;
       border-top: 1px solid var(--line);
-      background: rgba(15, 23, 42, 0.96);
-      backdrop-filter: blur(8px);
+      background: rgba(15,23,42,.96);
       padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
-      z-index: 3;
+    }
+
+    .composer-top {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .file-chip {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line2);
+      background: #0b1220;
+      font-size: 12px;
+      color: #cbd5e1;
+      max-width: 100%;
+    }
+
+    .file-chip.show {
+      display: inline-flex;
     }
 
     .composer-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 116px;
-      gap: 10px;
-      align-items: end;
+      grid-template-columns: auto minmax(0,1fr) 110px;
+      gap: 8px;
+      align-items: center;
     }
 
-    .composer input {
-      margin-top: 0;
+    .composer input[type="text"] {
+      margin: 0;
       min-width: 0;
       height: 48px;
       font-size: 16px;
@@ -339,97 +352,69 @@
       border-radius: 14px;
     }
 
-    .composer button {
-      height: 48px;
-      font-size: 14px;
-      padding: 0 14px;
+    .ghost-btn {
       border-radius: 14px;
+      min-height: 48px;
+      padding: 0 14px;
+      background: linear-gradient(180deg, #334155, #1e293b);
     }
 
-    .chats-list,
-    .users-list {
+    .list {
       display: flex;
       flex-direction: column;
       gap: 8px;
     }
 
-    .chat-item,
-    .user-item {
+    .item {
       padding: 10px 11px;
-      background: rgba(11, 18, 32, 0.92);
+      background: rgba(11,18,32,.92);
       border: 1px solid var(--line);
       border-radius: 14px;
       cursor: pointer;
-      transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+      transition: .15s ease;
     }
 
-    .chat-item:hover,
-    .user-item:hover {
+    .item:hover {
       background: #101a2d;
       transform: translateY(-1px);
     }
 
-    .chat-item.active {
+    .item.active {
       border-color: #60a5fa;
       background: linear-gradient(180deg, #14213d, #122036);
-      box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.15);
+      box-shadow: 0 0 0 1px rgba(96,165,250,.15);
     }
 
-    .chat-title {
+    .item-title {
       font-weight: 700;
-      margin-bottom: 4px;
       font-size: 14px;
+      margin-bottom: 4px;
+      white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
-    .chat-meta,
-    .user-meta,
     .muted {
       color: var(--muted);
       font-size: 12px;
-      line-height: 1.3;
+      line-height: 1.35;
     }
 
-    .chat-snippet {
+    .preview {
       margin-top: 4px;
       color: #cbd5e1;
       font-size: 12px;
-      opacity: 0.92;
       display: -webkit-box;
       -webkit-line-clamp: 1;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
 
-    .profile-row,
-    .user-line {
+    .profile-head {
       display: flex;
+      gap: 12px;
       align-items: center;
-      gap: 10px;
-      min-width: 0;
-    }
-
-    .avatar {
-      width: 40px;
-      height: 40px;
-      border-radius: 999px;
-      background: #334155 center/cover no-repeat;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      color: white;
-      flex-shrink: 0;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.22);
-    }
-
-    .avatar.small {
-      width: 34px;
-      height: 34px;
-      font-size: 13px;
+      margin-bottom: 12px;
     }
 
     .profile-name {
@@ -438,44 +423,57 @@
       word-break: break-word;
     }
 
-    .block-title-row {
-      display: flex;
+    .badge {
+      display: inline-flex;
       align-items: center;
+      justify-content: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #bfdbfe;
+      background: rgba(37,99,235,.15);
+      border: 1px solid rgba(96,165,250,.22);
+    }
+
+    .title-row {
+      display: flex;
       justify-content: space-between;
+      align-items: center;
       gap: 8px;
       margin-bottom: 10px;
     }
 
-    .block-title-row h3 {
-      margin: 0;
-    }
-
-    .badge {
-      font-size: 11px;
-      color: #bfdbfe;
-      background: rgba(37, 99, 235, 0.15);
-      border: 1px solid rgba(96, 165, 250, 0.22);
-      padding: 4px 8px;
-      border-radius: 999px;
-      white-space: nowrap;
-    }
-
-    .auth-note {
+    .hint {
       color: var(--muted);
       font-size: 12px;
-      margin-top: 10px;
       line-height: 1.35;
+      margin-top: 8px;
     }
 
-    .sidebar-section-tight .card {
-      padding-top: 12px;
-      padding-bottom: 12px;
+    .color-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .color-row input[type="color"] {
+      width: 52px;
+      min-width: 52px;
+      padding: 4px;
+      height: 44px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+
+    .join-lock {
+      margin-left: 6px;
+      font-size: 12px;
+      color: #fbbf24;
     }
 
     .sidebar::-webkit-scrollbar,
     .messages::-webkit-scrollbar {
       width: 10px;
-      height: 10px;
     }
 
     .sidebar::-webkit-scrollbar-thumb,
@@ -486,53 +484,28 @@
       background-clip: padding-box;
     }
 
-    .sidebar::-webkit-scrollbar-track,
-    .messages::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    @media (max-width: 1080px) {
-      :root {
-        --sidebar-width: 286px;
-      }
-
-      .brand {
-        font-size: 22px;
-      }
-    }
-
     @media (max-width: 900px) {
-      .app-shell {
+      .app {
         grid-template-columns: 1fr;
         grid-template-rows: auto minmax(0, 1fr);
       }
 
       .sidebar {
         height: auto;
-        max-height: 40dvh;
+        max-height: 44dvh;
         border-right: none;
         border-bottom: 1px solid var(--line);
-        padding-bottom: 10px;
       }
 
-      .main {
-        height: 60dvh;
-        min-height: 0;
-      }
-
-      .message-stack {
+      .stack {
         max-width: 88%;
       }
     }
 
     @media (max-width: 640px) {
-      :root {
-        --header-height: 74px;
-      }
-
       .sidebar {
         padding: 10px;
-        max-height: 42dvh;
+        max-height: 46dvh;
       }
 
       .brand {
@@ -541,149 +514,152 @@
       }
 
       .card {
-        border-radius: 16px;
         padding: 12px;
-        margin-bottom: 10px;
+        border-radius: 16px;
       }
 
-      .chat-header {
+      .topbar {
         padding: 12px 14px;
       }
 
-      .chat-header-title {
+      .chat-title {
         font-size: 18px;
       }
 
       .messages {
         padding: 12px 10px 10px;
-        gap: 9px;
+      }
+
+      .stack {
+        max-width: 92%;
       }
 
       .message-avatar {
         width: 30px;
         height: 30px;
-        font-size: 12px;
-      }
-
-      .message-stack {
-        max-width: 92%;
-      }
-
-      .message-bubble {
-        padding: 10px 12px;
-        border-radius: 16px;
       }
 
       .composer {
-        padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+        padding: 10px;
       }
 
       .composer-row {
-        grid-template-columns: minmax(0, 1fr) 100px;
-        gap: 8px;
-      }
-
-      .composer input {
-        height: 46px;
-        font-size: 16px;
-      }
-
-      .composer button {
-        height: 46px;
-        font-size: 14px;
+        grid-template-columns: auto minmax(0,1fr) 96px;
       }
 
       .row {
         flex-direction: column;
       }
-
-      .chat-item,
-      .user-item {
-        padding: 9px 10px;
-      }
-
-      .avatar {
-        width: 38px;
-        height: 38px;
-      }
     }
   </style>
 </head>
 <body>
-  <div class="app-shell">
+  <div class="app">
     <aside class="sidebar">
       <div class="brand">Exellee Chat</div>
 
-      <div id="authBlock" class="card">
+      <div id="authCard" class="card">
         <h3>Вход / регистрация</h3>
-        <input id="username" placeholder="Логин" autocomplete="username" />
-        <input id="password" type="password" placeholder="Пароль" autocomplete="current-password" />
-        <input id="avatarUrl" placeholder="Ссылка на аватар (необязательно)" />
-        <div class="row">
-          <button id="loginBtn">Войти</button>
-          <button id="registerBtn" class="secondary">Регистрация</button>
+        <div class="col">
+          <input id="authUsername" placeholder="Логин" autocomplete="username" />
+          <input id="authPassword" type="password" placeholder="Пароль" autocomplete="current-password" />
+          <input id="regFirstName" placeholder="Имя (необязательно)" />
+          <input id="regLastName" placeholder="Фамилия (необязательно)" />
+          <div class="color-row">
+            <input id="regNicknameColor" type="color" value="#4f8cff" />
+            <input id="regNicknameColorText" placeholder="Цвет ника, например #4f8cff" value="#4f8cff" />
+          </div>
+          <div class="row">
+            <button id="loginBtn">Войти</button>
+            <button id="registerBtn" class="secondary">Регистрация</button>
+          </div>
+          <div class="hint">После входа блок авторизации скрывается. Аватар грузится уже в профиле файлом до 512 КБ.</div>
         </div>
-        <div class="auth-note">После входа блок авторизации скрывается, а чат остаётся на весь экран.</div>
       </div>
 
-      <div id="profileBlock" class="card hidden">
-        <div class="block-title-row">
-          <h3>Профиль</h3>
-          <span class="badge">в сети</span>
+      <div id="profileCard" class="card hidden">
+        <div class="title-row">
+          <h3 style="margin:0;">Профиль</h3>
+          <span class="badge">онлайн</span>
         </div>
-        <div class="profile-row">
-          <div id="myAvatar" class="avatar"></div>
+
+        <div class="profile-head">
+          <div id="myAvatar" class="avatar big"></div>
           <div style="min-width:0;">
-            <div id="myUsername" class="profile-name"></div>
-            <div class="muted">Вы в системе</div>
+            <div id="myDisplayName" class="profile-name"></div>
+            <div id="myUsername" class="muted"></div>
           </div>
         </div>
-        <input id="newAvatarUrl" placeholder="Новая ссылка на аватар" />
-        <div class="row">
-          <button id="saveAvatarBtn" class="secondary">Сохранить аватар</button>
-          <button id="logoutBtn" class="danger">Выйти</button>
+
+        <div class="col">
+          <input id="profileFirstName" placeholder="Имя" />
+          <input id="profileLastName" placeholder="Фамилия" />
+          <div class="color-row">
+            <input id="profileNicknameColor" type="color" value="#4f8cff" />
+            <input id="profileNicknameColorText" placeholder="#4f8cff" value="#4f8cff" />
+          </div>
+
+          <input id="avatarFileInput" type="file" accept=".jpg,.jpeg,.png,.webp,.gif" />
+          <div class="hint">Аватар до 512 КБ. Форматы: JPG, PNG, WEBP, GIF.</div>
+
+          <div class="row">
+            <button id="saveProfileBtn" class="secondary">Сохранить профиль</button>
+            <button id="uploadAvatarBtn" class="green">Загрузить аватар</button>
+          </div>
+
+          <button id="logoutBtn" class="red">Выйти</button>
         </div>
       </div>
 
-      <div id="chatControls" class="card hidden">
+      <div id="createChatCard" class="card hidden">
         <h3>Создать общий чат</h3>
-        <input id="chatTitle" placeholder="Название чата" />
-        <input id="createPassword" type="password" placeholder="Пароль на создание общего чата" autocomplete="new-password" />
-        <button id="createChatBtn">Создать общий чат</button>
+        <div class="col">
+          <input id="chatTitle" placeholder="Название чата" />
+          <input id="createPassword" type="password" placeholder="Пароль на создание общего чата" autocomplete="new-password" />
+          <input id="chatPassword" type="password" placeholder="Пароль самого чата (необязательно)" autocomplete="new-password" />
+          <button id="createChatBtn">Создать общий чат</button>
+          <div class="hint">`315146` это пароль на право создавать общий чат. Поле ниже делает сам чат запароленным.</div>
+        </div>
       </div>
 
-      <div id="usersBlock" class="card hidden">
-        <div class="block-title-row">
-          <h3>Пользователи</h3>
-          <span class="badge" id="usersCountBadge">0</span>
+      <div id="usersCard" class="card hidden">
+        <div class="title-row">
+          <h3 style="margin:0;">Пользователи</h3>
+          <span id="usersBadge" class="badge">0</span>
         </div>
-        <div id="usersList" class="users-list"></div>
+        <div id="usersList" class="list"></div>
       </div>
 
-      <div id="chatsBlock" class="card hidden flex-grow">
-        <div class="block-title-row">
-          <h3>Чаты</h3>
-          <span class="badge" id="chatsCountBadge">0</span>
+      <div id="chatsCard" class="card hidden">
+        <div class="title-row">
+          <h3 style="margin:0;">Чаты</h3>
+          <span id="chatsBadge" class="badge">0</span>
         </div>
-        <div id="chatsList" class="chats-list"></div>
+        <div id="chatsList" class="list"></div>
       </div>
     </aside>
 
     <main class="main">
-      <div class="chat-header">
-        <div id="chatHeaderTitle" class="chat-header-title">Выбери чат</div>
+      <div class="topbar">
+        <div id="chatTitleTop" class="chat-title">Выбери чат</div>
         <div id="typingIndicator" class="typing"></div>
       </div>
 
       <div id="messages" class="messages">
-        <div class="empty-wrap">
-          <div class="system-note">Слева войди или зарегистрируйся, потом выбери чат.</div>
-        </div>
+        <div class="system-note">Войди, выбери чат и погнали.</div>
       </div>
 
       <div id="composer" class="composer hidden">
+        <div class="composer-top">
+          <label class="ghost-btn" style="display:inline-flex;align-items:center;justify-content:center;cursor:pointer;">
+            <input id="mediaFileInput" type="file" class="hidden" />
+            📎 Файл
+          </label>
+          <div id="selectedFileChip" class="file-chip"></div>
+        </div>
         <div class="composer-row">
-          <input id="messageInput" placeholder="Напиши сообщение..." />
+          <button id="clearFileBtn" class="ghost-btn hidden" type="button">✕</button>
+          <input id="messageInput" type="text" placeholder="Напиши сообщение..." />
           <button id="sendBtn">Отправить</button>
         </div>
       </div>
@@ -701,50 +677,57 @@
       typingStopTimer: null,
       remoteTypingTimers: {},
       renderedMessageIds: new Set(),
+      pendingMediaFile: null,
     };
 
-    const els = {
-      authBlock: document.getElementById("authBlock"),
-      profileBlock: document.getElementById("profileBlock"),
-      chatControls: document.getElementById("chatControls"),
-      usersBlock: document.getElementById("usersBlock"),
-      chatsBlock: document.getElementById("chatsBlock"),
+    const el = {
+      authCard: document.getElementById("authCard"),
+      profileCard: document.getElementById("profileCard"),
+      createChatCard: document.getElementById("createChatCard"),
+      usersCard: document.getElementById("usersCard"),
+      chatsCard: document.getElementById("chatsCard"),
 
-      username: document.getElementById("username"),
-      password: document.getElementById("password"),
-      avatarUrl: document.getElementById("avatarUrl"),
+      authUsername: document.getElementById("authUsername"),
+      authPassword: document.getElementById("authPassword"),
+      regFirstName: document.getElementById("regFirstName"),
+      regLastName: document.getElementById("regLastName"),
+      regNicknameColor: document.getElementById("regNicknameColor"),
+      regNicknameColorText: document.getElementById("regNicknameColorText"),
       loginBtn: document.getElementById("loginBtn"),
       registerBtn: document.getElementById("registerBtn"),
 
       myAvatar: document.getElementById("myAvatar"),
+      myDisplayName: document.getElementById("myDisplayName"),
       myUsername: document.getElementById("myUsername"),
-      newAvatarUrl: document.getElementById("newAvatarUrl"),
-      saveAvatarBtn: document.getElementById("saveAvatarBtn"),
+      profileFirstName: document.getElementById("profileFirstName"),
+      profileLastName: document.getElementById("profileLastName"),
+      profileNicknameColor: document.getElementById("profileNicknameColor"),
+      profileNicknameColorText: document.getElementById("profileNicknameColorText"),
+      avatarFileInput: document.getElementById("avatarFileInput"),
+      saveProfileBtn: document.getElementById("saveProfileBtn"),
+      uploadAvatarBtn: document.getElementById("uploadAvatarBtn"),
       logoutBtn: document.getElementById("logoutBtn"),
 
       chatTitle: document.getElementById("chatTitle"),
       createPassword: document.getElementById("createPassword"),
+      chatPassword: document.getElementById("chatPassword"),
       createChatBtn: document.getElementById("createChatBtn"),
 
       usersList: document.getElementById("usersList"),
       chatsList: document.getElementById("chatsList"),
-      usersCountBadge: document.getElementById("usersCountBadge"),
-      chatsCountBadge: document.getElementById("chatsCountBadge"),
+      usersBadge: document.getElementById("usersBadge"),
+      chatsBadge: document.getElementById("chatsBadge"),
 
-      chatHeaderTitle: document.getElementById("chatHeaderTitle"),
+      chatTitleTop: document.getElementById("chatTitleTop"),
       typingIndicator: document.getElementById("typingIndicator"),
       messages: document.getElementById("messages"),
       composer: document.getElementById("composer"),
       messageInput: document.getElementById("messageInput"),
+      mediaFileInput: document.getElementById("mediaFileInput"),
+      selectedFileChip: document.getElementById("selectedFileChip"),
+      clearFileBtn: document.getElementById("clearFileBtn"),
       sendBtn: document.getElementById("sendBtn"),
     };
-
-    function authHeaders() {
-      return {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${state.token}`,
-      };
-    }
 
     function escapeHtml(text) {
       return String(text ?? "")
@@ -755,149 +738,152 @@
         .replaceAll("'", "&#039;");
     }
 
-    function formatDate(value) {
+    function authHeaders(isJson = true) {
+      const headers = {
+        Authorization: `Bearer ${state.token}`
+      };
+      if (isJson) headers["Content-Type"] = "application/json";
+      return headers;
+    }
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, options);
+      const text = await res.text();
+      let data = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { detail: text || `HTTP ${res.status}` };
+      }
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function initialsFromUser(user) {
+      const base = (user?.display_name || user?.username || "?").trim();
+      return base ? base[0].toUpperCase() : "?";
+    }
+
+    function displayName(user) {
+      const full = [user?.first_name, user?.last_name].filter(Boolean).join(" ").trim();
+      return full || user?.display_name || user?.username || "Пользователь";
+    }
+
+    function setAvatarBox(box, user, big = false) {
+      const avatarUrl = user?.avatar_url || user?.avatar_path || "";
+      const initial = initialsFromUser(user);
+      box.className = big ? "avatar big" : "avatar";
+      if (avatarUrl) {
+        box.style.backgroundImage = `url('${String(avatarUrl).replace(/'/g, "%27")}')`;
+        box.textContent = "";
+      } else {
+        box.style.backgroundImage = "";
+        box.textContent = initial;
+      }
+    }
+
+    function messageAvatarHtml(user) {
+      const avatarUrl = user?.avatar_url || user?.avatar_path || "";
+      const initial = initialsFromUser(user);
+      if (avatarUrl) {
+        return `<div class="message-avatar" style="background-image:url('${String(avatarUrl).replace(/'/g, "%27")}')"></div>`;
+      }
+      return `<div class="message-avatar">${escapeHtml(initial)}</div>`;
+    }
+
+    function formatTime(value) {
       try {
         return new Date(value).toLocaleString("ru-RU", {
           day: "2-digit",
           month: "2-digit",
           hour: "2-digit",
-          minute: "2-digit",
+          minute: "2-digit"
         });
       } catch {
-        return value;
+        return value || "";
       }
-    }
-
-    function getUserInitial(user) {
-      const name = (user?.username || "?").trim();
-      return name ? name[0].toUpperCase() : "?";
-    }
-
-    function avatarHtml(user, extraClass = "") {
-      const first = getUserInitial(user);
-      const safeUrl = user?.avatar_url ? String(user.avatar_url).replace(/'/g, "%27") : "";
-
-      if (safeUrl) {
-        return `<div class="avatar ${extraClass}" style="background-image:url('${safeUrl}')"></div>`;
-      }
-
-      return `<div class="avatar ${extraClass}">${escapeHtml(first)}</div>`;
-    }
-
-    function messageAvatarHtml(user) {
-      const first = getUserInitial(user);
-      const safeUrl = user?.avatar_url ? String(user.avatar_url).replace(/'/g, "%27") : "";
-
-      if (safeUrl) {
-        return `<div class="message-avatar" style="background-image:url('${safeUrl}')"></div>`;
-      }
-
-      return `<div class="message-avatar">${escapeHtml(first)}</div>`;
     }
 
     function scrollMessagesToBottom(force = false) {
       const nearBottom =
-        els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight < 140;
-
+        el.messages.scrollHeight - el.messages.scrollTop - el.messages.clientHeight < 140;
       if (force || nearBottom) {
         requestAnimationFrame(() => {
-          els.messages.scrollTop = els.messages.scrollHeight;
+          el.messages.scrollTop = el.messages.scrollHeight;
         });
       }
     }
 
-    function renderMyProfile() {
-      if (!state.me) return;
-
-      els.myUsername.textContent = state.me.username;
-      const first = getUserInitial(state.me);
-
-      if (state.me.avatar_url) {
-        els.myAvatar.style.backgroundImage = `url('${state.me.avatar_url.replace(/'/g, "%27")}')`;
-        els.myAvatar.textContent = "";
-      } else {
-        els.myAvatar.style.backgroundImage = "";
-        els.myAvatar.textContent = first;
-      }
-
-      els.newAvatarUrl.value = state.me.avatar_url || "";
+    function syncColorInputs(colorEl, textEl) {
+      colorEl.addEventListener("input", () => {
+        textEl.value = colorEl.value;
+      });
+      textEl.addEventListener("input", () => {
+        const v = textEl.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+          colorEl.value = v;
+        }
+      });
     }
 
-    function showLoggedOutUI() {
-      els.authBlock.classList.remove("hidden");
-      els.profileBlock.classList.add("hidden");
-      els.chatControls.classList.add("hidden");
-      els.usersBlock.classList.add("hidden");
-      els.chatsBlock.classList.add("hidden");
-      els.composer.classList.add("hidden");
-      els.chatHeaderTitle.textContent = "Выбери чат";
-      els.typingIndicator.textContent = "";
-      els.messages.innerHTML = `
-        <div class="empty-wrap">
-          <div class="system-note">Слева войди или зарегистрируйся, потом выбери чат.</div>
-        </div>
-      `;
+    syncColorInputs(el.regNicknameColor, el.regNicknameColorText);
+    syncColorInputs(el.profileNicknameColor, el.profileNicknameColorText);
+
+    function setLoggedOutUI() {
+      el.authCard.classList.remove("hidden");
+      el.profileCard.classList.add("hidden");
+      el.createChatCard.classList.add("hidden");
+      el.usersCard.classList.add("hidden");
+      el.chatsCard.classList.add("hidden");
+      el.composer.classList.add("hidden");
+      el.chatTitleTop.textContent = "Выбери чат";
+      el.typingIndicator.textContent = "";
+      el.messages.innerHTML = `<div class="system-note">Войди, выбери чат и погнали.</div>`;
       state.renderedMessageIds.clear();
+      state.currentChatId = null;
     }
 
-    function showLoggedInUI() {
-      els.authBlock.classList.add("hidden");
-      els.profileBlock.classList.remove("hidden");
-      els.chatControls.classList.remove("hidden");
-      els.usersBlock.classList.remove("hidden");
-      els.chatsBlock.classList.remove("hidden");
-      renderMyProfile();
+    function setLoggedInUI() {
+      el.authCard.classList.add("hidden");
+      el.profileCard.classList.remove("hidden");
+      el.createChatCard.classList.remove("hidden");
+      el.usersCard.classList.remove("hidden");
+      el.chatsCard.classList.remove("hidden");
     }
 
-    async function api(path, options = {}) {
-      const response = await fetch(path, options);
-      const text = await response.text();
-      let data = {};
-
+    async function registerUser() {
       try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = { detail: text || "Invalid server response" };
-      }
-
-      if (!response.ok) {
-        throw new Error(data.detail || `HTTP ${response.status}`);
-      }
-
-      return data;
-    }
-
-    async function register() {
-      try {
-        const username = els.username.value.trim();
-        const password = els.password.value;
-
+        const username = el.authUsername.value.trim();
+        const password = el.authPassword.value;
         if (!username || !password) {
           alert("Введи логин и пароль");
           return;
         }
 
+        const payload = {
+          username,
+          password,
+          first_name: el.regFirstName.value.trim() || null,
+          last_name: el.regLastName.value.trim() || null,
+          nickname_color: el.regNicknameColorText.value.trim() || "#4f8cff",
+        };
+
         const data = await api("/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            username,
-            password,
-            avatar_url: els.avatarUrl.value.trim() || null,
-          }),
+          body: JSON.stringify(payload),
         });
 
         alert(`Пользователь ${data.username} зарегистрирован`);
-      } catch (error) {
-        alert(error.message);
+      } catch (err) {
+        alert(err.message);
       }
     }
 
-    async function login() {
+    async function loginUser() {
       try {
-        const username = els.username.value.trim();
-        const password = els.password.value;
-
+        const username = el.authUsername.value.trim();
+        const password = el.authPassword.value;
         if (!username || !password) {
           alert("Введи логин и пароль");
           return;
@@ -912,116 +898,208 @@
         state.token = data.access_token;
         localStorage.setItem("token", state.token);
         await bootstrapAfterLogin();
-      } catch (error) {
-        alert(error.message);
+      } catch (err) {
+        alert(err.message);
       }
     }
 
-    async function loadMe() {
-      state.me = await api("/me", { headers: authHeaders() });
+    function logout() {
+      localStorage.removeItem("token");
+      state.token = "";
+      state.me = null;
+      state.chats = [];
+      state.users = [];
+      state.currentChatId = null;
+      state.pendingMediaFile = null;
+      clearSelectedFile();
+      if (state.ws) {
+        try { state.ws.close(); } catch (_) {}
+      }
+      state.ws = null;
+      setLoggedOutUI();
     }
 
-    async function saveAvatar() {
+    async function loadMe() {
+      state.me = await api("/me", { headers: authHeaders(false) });
+      renderMyProfile();
+    }
+
+    function renderMyProfile() {
+      if (!state.me) return;
+      setAvatarBox(el.myAvatar, state.me, true);
+      el.myDisplayName.textContent = displayName(state.me);
+      el.myDisplayName.style.color = state.me.nickname_color || "#4f8cff";
+      el.myUsername.textContent = `@${state.me.username}`;
+      el.profileFirstName.value = state.me.first_name || "";
+      el.profileLastName.value = state.me.last_name || "";
+      el.profileNicknameColor.value = state.me.nickname_color || "#4f8cff";
+      el.profileNicknameColorText.value = state.me.nickname_color || "#4f8cff";
+    }
+
+    async function saveProfile() {
       try {
-        state.me = await api("/me/avatar", {
+        state.me = await api("/me/profile", {
           method: "PUT",
-          headers: authHeaders(),
+          headers: authHeaders(true),
           body: JSON.stringify({
-            avatar_url: els.newAvatarUrl.value.trim() || null,
+            first_name: el.profileFirstName.value.trim() || null,
+            last_name: el.profileLastName.value.trim() || null,
+            nickname_color: el.profileNicknameColorText.value.trim() || "#4f8cff",
           }),
         });
 
         renderMyProfile();
-        await loadUsers();
-        await loadChats();
-      } catch (error) {
-        alert(error.message);
+        await Promise.all([loadUsers(), loadChats()]);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function uploadAvatar() {
+      try {
+        const file = el.avatarFileInput.files?.[0];
+        if (!file) {
+          alert("Выбери файл аватара");
+          return;
+        }
+        if (file.size > 512 * 1024) {
+          alert("Аватар больше 512 КБ");
+          return;
+        }
+
+        const form = new FormData();
+        form.append("file", file);
+
+        const res = await fetch("/me/avatar", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${state.token}` },
+          body: form,
+        });
+
+        const text = await res.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text || "Upload error" }; }
+        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+        state.me = data;
+        renderMyProfile();
+        await Promise.all([loadUsers(), loadChats()]);
+        el.avatarFileInput.value = "";
+        alert("Аватар загружен");
+      } catch (err) {
+        alert(err.message);
       }
     }
 
     async function loadUsers() {
-      state.users = await api("/users", { headers: authHeaders() });
+      state.users = await api("/users", { headers: authHeaders(false) });
       renderUsers();
     }
 
-    async function loadChats() {
-      state.chats = await api("/chats", { headers: authHeaders() });
-      renderChats();
-    }
-
     function renderUsers() {
-      els.usersCountBadge.textContent = String(state.users.length);
+      el.usersBadge.textContent = String(state.users.length);
 
       if (!state.users.length) {
-        els.usersList.innerHTML = `<div class="empty">Пока нет других пользователей</div>`;
+        el.usersList.innerHTML = `<div class="system-note">Других пользователей пока нет</div>`;
         return;
       }
 
-      els.usersList.innerHTML = state.users.map(user => `
-        <div class="user-item" data-user-id="${user.id}">
-          <div class="user-line">
-            ${avatarHtml(user, "small")}
+      el.usersList.innerHTML = state.users.map(user => `
+        <div class="item user-item" data-user-id="${user.id}">
+          <div style="display:flex;gap:10px;align-items:center;min-width:0;">
+            ${user.avatar_url || user.avatar_path
+              ? `<div class="avatar" style="background-image:url('${String(user.avatar_url || user.avatar_path).replace(/'/g, "%27")}')"></div>`
+              : `<div class="avatar">${escapeHtml(initialsFromUser(user))}</div>`}
             <div style="min-width:0;">
-              <div class="chat-title">${escapeHtml(user.username)}</div>
-              <div class="user-meta">Нажми для лички</div>
+              <div class="item-title" style="color:${escapeHtml(user.nickname_color || "#4f8cff")}">${escapeHtml(displayName(user))}</div>
+              <div class="muted">@${escapeHtml(user.username)}</div>
             </div>
           </div>
         </div>
       `).join("");
 
-      els.usersList.querySelectorAll(".user-item").forEach(item => {
-        item.addEventListener("click", async () => {
-          const userId = Number(item.dataset.userId);
-
+      document.querySelectorAll(".user-item").forEach(node => {
+        node.addEventListener("click", async () => {
           try {
+            const userId = Number(node.dataset.userId);
             const chat = await api("/direct-chats", {
               method: "POST",
-              headers: authHeaders(),
+              headers: authHeaders(true),
               body: JSON.stringify({ user_id: userId }),
             });
-
             await loadChats();
-            await openChat(chat.id);
-          } catch (error) {
-            alert(error.message);
+            await openChat(chat.id, false);
+          } catch (err) {
+            alert(err.message);
           }
         });
       });
     }
 
-    function getLastMessagePreview(chat) {
+    async function loadChats() {
+      state.chats = await api("/chats", { headers: authHeaders(false) });
+      renderChats();
+    }
+
+    function chatPreview(chat) {
       if (!chat.last_message) return "Без сообщений";
-      const author = chat.last_message?.user?.username || "Кто-то";
-      const content = chat.last_message?.content || "";
-      return `${author}: ${content}`;
+      const msg = chat.last_message;
+      const author = msg.user ? displayName(msg.user) : "Кто-то";
+      let body = msg.content || "";
+      if (!body && msg.media_url) body = "[медиа]";
+      return `${author}: ${body}`;
     }
 
     function renderChats() {
-      els.chatsCountBadge.textContent = String(state.chats.length);
+      el.chatsBadge.textContent = String(state.chats.length);
 
       if (!state.chats.length) {
-        els.chatsList.innerHTML = `<div class="empty">Чатов пока нет</div>`;
+        el.chatsList.innerHTML = `<div class="system-note">Чатов пока нет</div>`;
         return;
       }
 
-      els.chatsList.innerHTML = state.chats.map(chat => `
-        <div class="chat-item ${state.currentChatId === chat.id ? "active" : ""}" data-chat-id="${chat.id}">
-          <div class="chat-title">${escapeHtml(chat.title)}</div>
-          <div class="chat-meta">${chat.is_direct ? "Личка" : "Общий чат"}</div>
-          <div class="chat-snippet">${escapeHtml(getLastMessagePreview(chat))}</div>
+      el.chatsList.innerHTML = state.chats.map(chat => `
+        <div class="item chat-item ${state.currentChatId === chat.id ? "active" : ""}" data-chat-id="${chat.id}">
+          <div class="item-title">
+            ${escapeHtml(chat.title)}
+            ${chat.requires_password ? `<span class="join-lock">🔒</span>` : ""}
+          </div>
+          <div class="muted">
+            ${chat.is_direct ? "Личка" : "Общий чат"} · ${chat.joined ? "доступ есть" : "не вошёл"}
+          </div>
+          <div class="preview">${escapeHtml(chatPreview(chat))}</div>
         </div>
       `).join("");
 
-      els.chatsList.querySelectorAll(".chat-item").forEach(item => {
-        item.addEventListener("click", () => {
-          openChat(Number(item.dataset.chatId));
+      document.querySelectorAll(".chat-item").forEach(node => {
+        node.addEventListener("click", async () => {
+          const chatId = Number(node.dataset.chatId);
+          const chat = state.chats.find(c => c.id === chatId);
+
+          if (chat && chat.requires_password && !chat.joined) {
+            const password = prompt(`Введите пароль для чата "${chat.title}"`);
+            if (password === null) return;
+            try {
+              await api(`/chats/${chatId}/join`, {
+                method: "POST",
+                headers: authHeaders(true),
+                body: JSON.stringify({ password }),
+              });
+              await loadChats();
+            } catch (err) {
+              alert(err.message);
+              return;
+            }
+          }
+
+          await openChat(chatId, false);
         });
       });
     }
 
     async function createPublicChat() {
       try {
-        const title = els.chatTitle.value.trim();
+        const title = el.chatTitle.value.trim();
         if (!title) {
           alert("Введи название чата");
           return;
@@ -1029,57 +1107,85 @@
 
         const chat = await api("/chats", {
           method: "POST",
-          headers: authHeaders(),
+          headers: authHeaders(true),
           body: JSON.stringify({
             title,
             is_public: true,
-            create_password: els.createPassword.value,
+            create_password: el.createPassword.value,
+            chat_password: el.chatPassword.value.trim() || null,
           }),
         });
 
-        els.chatTitle.value = "";
-        els.createPassword.value = "";
+        el.chatTitle.value = "";
+        el.createPassword.value = "";
+        el.chatPassword.value = "";
         await loadChats();
-        await openChat(chat.id);
-      } catch (error) {
-        alert(error.message);
+        await openChat(chat.id, false);
+      } catch (err) {
+        alert(err.message);
       }
     }
 
-    async function openChat(chatId) {
+    async function openChat(chatId, forceJoinIfPublic = true) {
       state.currentChatId = chatId;
       renderChats();
 
       const chat = state.chats.find(c => c.id === chatId);
-      els.chatHeaderTitle.textContent = chat ? chat.title : `Чат #${chatId}`;
-      els.typingIndicator.textContent = "";
-      els.composer.classList.remove("hidden");
+      el.chatTitleTop.textContent = chat ? chat.title : `Чат #${chatId}`;
+      el.typingIndicator.textContent = "";
+      el.composer.classList.remove("hidden");
 
       try {
         const messages = await api(`/chats/${chatId}/messages`, {
-          headers: authHeaders(),
+          headers: authHeaders(false)
         });
         renderMessages(messages);
-        requestAnimationFrame(() => els.messageInput.focus());
-      } catch (error) {
-        alert(error.message);
+
+        if (forceJoinIfPublic && chat && !chat.joined) {
+          await loadChats();
+        }
+
+        requestAnimationFrame(() => el.messageInput.focus());
+      } catch (err) {
+        alert(err.message);
       }
+    }
+
+    function renderMedia(msg) {
+      if (!msg.media_url) return "";
+
+      const url = escapeHtml(msg.media_url);
+      const type = String(msg.media_type || "");
+
+      if (type.startsWith("image/")) {
+        return `<div class="message-media"><img src="${url}" alt="image" loading="lazy"></div>`;
+      }
+      if (type.startsWith("video/")) {
+        return `<div class="message-media"><video src="${url}" controls preload="metadata"></video></div>`;
+      }
+      if (type.startsWith("audio/")) {
+        return `<div class="message-media"><audio src="${url}" controls preload="metadata"></audio></div>`;
+      }
+      return `<div class="message-media"><a href="${url}" target="_blank" rel="noopener noreferrer">Открыть файл</a></div>`;
     }
 
     function buildMessageHtml(msg) {
       const isMine = state.me && Number(msg.user?.id) === Number(state.me.id);
-      const authorLabel = isMine ? "Вы" : escapeHtml(msg.user?.username || "Пользователь");
+      const authorText = isMine ? "Вы" : escapeHtml(displayName(msg.user));
+      const authorColor = isMine ? "#ffffff" : escapeHtml(msg.user?.nickname_color || "#4f8cff");
+      const content = escapeHtml(msg.content || "");
 
       return `
         <div class="message ${isMine ? "mine" : "theirs"}" data-message-id="${msg.id}">
           ${isMine ? "" : messageAvatarHtml(msg.user)}
-          <div class="message-stack">
-            <div class="message-meta">
-              <span class="message-author">${authorLabel}</span>
-              <span class="message-time">${escapeHtml(formatDate(msg.created_at))}</span>
+          <div class="stack">
+            <div class="meta">
+              <span class="author" style="color:${authorColor}">${authorText}</span>
+              <span class="time">${escapeHtml(formatTime(msg.created_at))}</span>
             </div>
-            <div class="message-bubble">
-              <div class="message-content">${escapeHtml(msg.content || "")}</div>
+            <div class="bubble">
+              ${content ? `<div>${content}</div>` : ""}
+              ${renderMedia(msg)}
             </div>
           </div>
         </div>
@@ -1090,15 +1196,11 @@
       state.renderedMessageIds.clear();
 
       if (!messages.length) {
-        els.messages.innerHTML = `
-          <div class="empty-wrap">
-            <div class="empty">Сообщений пока нет</div>
-          </div>
-        `;
+        el.messages.innerHTML = `<div class="system-note">Сообщений пока нет</div>`;
         return;
       }
 
-      els.messages.innerHTML = messages.map(msg => {
+      el.messages.innerHTML = messages.map(msg => {
         state.renderedMessageIds.add(msg.id);
         return buildMessageHtml(msg);
       }).join("");
@@ -1107,47 +1209,93 @@
     }
 
     function appendMessage(msg) {
-      if (!msg || state.renderedMessageIds.has(msg.id)) {
-        return;
-      }
+      if (!msg || state.renderedMessageIds.has(msg.id)) return;
 
-      const empty = els.messages.querySelector(".empty-wrap");
-      if (empty) {
-        els.messages.innerHTML = "";
+      const hadOnlySystem = el.messages.querySelector(".system-note");
+      if (hadOnlySystem && el.messages.children.length === 1) {
+        el.messages.innerHTML = "";
       }
 
       const shouldStick =
-        els.messages.scrollHeight - els.messages.scrollTop - els.messages.clientHeight < 140;
+        el.messages.scrollHeight - el.messages.scrollTop - el.messages.clientHeight < 140;
 
       state.renderedMessageIds.add(msg.id);
 
-      const div = document.createElement("div");
-      div.innerHTML = buildMessageHtml(msg);
-      els.messages.appendChild(div.firstElementChild);
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = buildMessageHtml(msg);
+      el.messages.appendChild(wrapper.firstElementChild);
 
       scrollMessagesToBottom(shouldStick);
+    }
+
+    function updateSelectedFileChip() {
+      if (!state.pendingMediaFile) {
+        el.selectedFileChip.classList.remove("show");
+        el.selectedFileChip.textContent = "";
+        el.clearFileBtn.classList.add("hidden");
+        return;
+      }
+      el.selectedFileChip.classList.add("show");
+      el.selectedFileChip.textContent = `${state.pendingMediaFile.name} · ${Math.ceil(state.pendingMediaFile.size / 1024)} КБ`;
+      el.clearFileBtn.classList.remove("hidden");
+    }
+
+    function clearSelectedFile() {
+      state.pendingMediaFile = null;
+      el.mediaFileInput.value = "";
+      updateSelectedFileChip();
+    }
+
+    async function uploadMediaIfNeeded() {
+      if (!state.pendingMediaFile) return null;
+
+      const form = new FormData();
+      form.append("file", state.pendingMediaFile);
+
+      const res = await fetch("/media/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${state.token}` },
+        body: form,
+      });
+
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text || "Upload error" }; }
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
+      return data;
     }
 
     async function sendMessage() {
       if (!state.currentChatId) return;
 
-      const content = els.messageInput.value.trim();
-      if (!content) return;
+      const content = el.messageInput.value.trim();
+      if (!content && !state.pendingMediaFile) return;
 
       try {
+        let media = null;
+        if (state.pendingMediaFile) {
+          media = await uploadMediaIfNeeded();
+        }
+
         const message = await api(`/chats/${state.currentChatId}/messages`, {
           method: "POST",
-          headers: authHeaders(),
-          body: JSON.stringify({ content }),
+          headers: authHeaders(true),
+          body: JSON.stringify({
+            content: content || null,
+            media_url: media?.media_url || null,
+            media_type: media?.media_type || null,
+          }),
         });
 
         appendMessage(message);
-        els.messageInput.value = "";
+        el.messageInput.value = "";
+        clearSelectedFile();
         sendTyping(false);
         await loadChats();
-        requestAnimationFrame(() => els.messageInput.focus());
-      } catch (error) {
-        alert(error.message);
+        requestAnimationFrame(() => el.messageInput.focus());
+      } catch (err) {
+        alert(err.message);
       }
     }
 
@@ -1155,18 +1303,14 @@
       try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (!AudioCtx) return;
-
         const ctx = new AudioCtx();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-
         osc.connect(gain);
         gain.connect(ctx.destination);
-
         osc.type = "sine";
         osc.frequency.value = 900;
         gain.gain.value = 0.02;
-
         osc.start();
         osc.stop(ctx.currentTime + 0.08);
       } catch (_) {}
@@ -1176,19 +1320,31 @@
       if (!("Notification" in window)) return;
       if (document.hasFocus()) return;
       if (Notification.permission !== "granted") return;
-
       try {
         new Notification(title, { body });
       } catch (_) {}
+    }
+
+    function sendTyping(isTyping) {
+      if (!state.ws || state.ws.readyState !== WebSocket.OPEN || !state.currentChatId) return;
+      state.ws.send(JSON.stringify({
+        type: "typing",
+        chat_id: state.currentChatId,
+        is_typing: isTyping,
+      }));
+    }
+
+    function handleTyping() {
+      sendTyping(true);
+      if (state.typingStopTimer) clearTimeout(state.typingStopTimer);
+      state.typingStopTimer = setTimeout(() => sendTyping(false), 900);
     }
 
     function connectWs() {
       if (!state.token) return;
 
       if (state.ws) {
-        try {
-          state.ws.close();
-        } catch (_) {}
+        try { state.ws.close(); } catch (_) {}
       }
 
       const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -1204,126 +1360,89 @@
             appendMessage(data.message);
           }
 
-          if (state.me && data.message.user.id !== state.me.id) {
+          if (state.me && Number(data.message?.user?.id) !== Number(state.me.id)) {
+            const name = displayName(data.message.user);
+            const body = data.message.content || (data.message.media_url ? "[медиа]" : "Новое сообщение");
             playBeep();
-            showBrowserNotification(data.message.user.username, data.message.content);
+            showBrowserNotification(name, body);
           }
         }
 
         if (data.type === "typing") {
           if (!state.me) return;
-          if (data.user.id === state.me.id) return;
+          if (Number(data.user?.id) === Number(state.me.id)) return;
           if (Number(data.chat_id) !== Number(state.currentChatId)) return;
 
           if (data.is_typing) {
-            els.typingIndicator.textContent = `${data.user.username} печатает...`;
-
+            el.typingIndicator.textContent = `${displayName(data.user)} печатает...`;
             clearTimeout(state.remoteTypingTimers[data.user.id]);
             state.remoteTypingTimers[data.user.id] = setTimeout(() => {
-              els.typingIndicator.textContent = "";
+              el.typingIndicator.textContent = "";
             }, 1500);
           } else {
-            els.typingIndicator.textContent = "";
+            el.typingIndicator.textContent = "";
           }
         }
       };
 
       state.ws.onclose = () => {
         setTimeout(() => {
-          if (state.token) {
-            connectWs();
-          }
+          if (state.token) connectWs();
         }, 1500);
       };
-    }
-
-    function sendTyping(isTyping) {
-      if (!state.ws) return;
-      if (state.ws.readyState !== WebSocket.OPEN) return;
-      if (!state.currentChatId) return;
-
-      state.ws.send(JSON.stringify({
-        type: "typing",
-        chat_id: state.currentChatId,
-        is_typing: isTyping,
-      }));
-    }
-
-    function handleTyping() {
-      sendTyping(true);
-
-      if (state.typingStopTimer) {
-        clearTimeout(state.typingStopTimer);
-      }
-
-      state.typingStopTimer = setTimeout(() => {
-        sendTyping(false);
-      }, 900);
-    }
-
-    function logout() {
-      localStorage.removeItem("token");
-
-      state.token = "";
-      state.me = null;
-      state.chats = [];
-      state.users = [];
-      state.currentChatId = null;
-      state.renderedMessageIds.clear();
-
-      if (state.ws) {
-        try {
-          state.ws.close();
-        } catch (_) {}
-      }
-
-      state.ws = null;
-      showLoggedOutUI();
     }
 
     async function bootstrapAfterLogin() {
       try {
         await loadMe();
-        showLoggedInUI();
+        setLoggedInUI();
         connectWs();
         await Promise.all([loadUsers(), loadChats()]);
 
         if ("Notification" in window && Notification.permission === "default") {
           Notification.requestPermission().catch(() => {});
         }
-      } catch (error) {
-        console.error(error);
+      } catch (err) {
+        console.error(err);
         logout();
       }
     }
 
-    els.registerBtn.addEventListener("click", register);
-    els.loginBtn.addEventListener("click", login);
-    els.saveAvatarBtn.addEventListener("click", saveAvatar);
-    els.logoutBtn.addEventListener("click", logout);
-    els.createChatBtn.addEventListener("click", createPublicChat);
-    els.sendBtn.addEventListener("click", sendMessage);
+    el.loginBtn.addEventListener("click", loginUser);
+    el.registerBtn.addEventListener("click", registerUser);
+    el.saveProfileBtn.addEventListener("click", saveProfile);
+    el.uploadAvatarBtn.addEventListener("click", uploadAvatar);
+    el.logoutBtn.addEventListener("click", logout);
+    el.createChatBtn.addEventListener("click", createPublicChat);
+    el.sendBtn.addEventListener("click", sendMessage);
 
-    els.password.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        login();
+    el.authPassword.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        loginUser();
       }
     });
 
-    els.messageInput.addEventListener("input", handleTyping);
-    els.messageInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
+    el.messageInput.addEventListener("input", handleTyping);
+    el.messageInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
         sendMessage();
       }
     });
+
+    el.mediaFileInput.addEventListener("change", () => {
+      state.pendingMediaFile = el.mediaFileInput.files?.[0] || null;
+      updateSelectedFileChip();
+    });
+
+    el.clearFileBtn.addEventListener("click", clearSelectedFile);
 
     (async function init() {
       if (state.token) {
         await bootstrapAfterLogin();
       } else {
-        showLoggedOutUI();
+        setLoggedOutUI();
       }
     })();
   </script>
