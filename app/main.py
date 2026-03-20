@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -112,7 +111,7 @@ def ensure_member(db: Session, chat_id: int, user_id: int):
 def serialize_chat(chat: models.Chat, current_user_id: int) -> dict:
     last_message = None
     if chat.messages:
-        ordered = sorted(chat.messages, key=lambda x: x.created_at, reverse=True)
+        ordered = sorted(chat.messages, key=lambda x: (x.created_at, x.id), reverse=True)
         if ordered:
             last_message = serialize_message(ordered[0])
 
@@ -136,22 +135,33 @@ class ConnectionManager:
         self.active_connections.setdefault(user_id, []).append(websocket)
 
     def disconnect(self, user_id: int, websocket: WebSocket):
-        if user_id in self.active_connections:
-            self.active_connections[user_id] = [
-                ws for ws in self.active_connections[user_id] if ws != websocket
-            ]
-            if not self.active_connections[user_id]:
-                del self.active_connections[user_id]
+        if user_id not in self.active_connections:
+            return
+
+        self.active_connections[user_id] = [
+            ws for ws in self.active_connections[user_id] if ws is not websocket
+        ]
+        if not self.active_connections[user_id]:
+            del self.active_connections[user_id]
 
     async def send_to_user(self, user_id: int, payload: dict):
-        for ws in self.active_connections.get(user_id, []):
-            await ws.send_json(payload)
+        sockets = list(self.active_connections.get(user_id, []))
+        dead = []
+
+        for ws in sockets:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+
+        for ws in dead:
+            self.disconnect(user_id, ws)
 
     async def broadcast_chat(self, chat: models.Chat, payload: dict):
         if chat.is_public and not chat.is_direct:
-            targets = set(self.active_connections.keys())
+            targets = list(self.active_connections.keys())
         else:
-            targets = {member.user_id for member in chat.members}
+            targets = list({member.user_id for member in chat.members})
 
         for user_id in targets:
             await self.send_to_user(user_id, payload)
@@ -388,7 +398,6 @@ async def create_message(
         db.query(models.Chat)
         .options(
             joinedload(models.Chat.members).joinedload(models.ChatMember.user),
-            joinedload(models.Chat.messages).joinedload(models.Message.user),
         )
         .filter(models.Chat.id == chat_id)
         .first()
@@ -429,7 +438,11 @@ async def create_message(
         "chat_id": chat_id,
         "message": serialize_message(message),
     }
-    await manager.broadcast_chat(chat, payload)
+
+    try:
+        await manager.broadcast_chat(chat, payload)
+    except Exception as e:
+        print(f"Broadcast warning: {e}")
 
     return serialize_message(message)
 
@@ -475,20 +488,25 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     if not user:
                         continue
 
-                    await manager.broadcast_chat(
-                        chat,
-                        {
-                            "type": "typing",
-                            "chat_id": chat_id,
-                            "is_typing": is_typing,
-                            "user": serialize_user(user),
-                        },
-                    )
+                    try:
+                        await manager.broadcast_chat(
+                            chat,
+                            {
+                                "type": "typing",
+                                "chat_id": chat_id,
+                                "is_typing": is_typing,
+                                "user": serialize_user(user),
+                            },
+                        )
+                    except Exception as e:
+                        print(f"Typing broadcast warning: {e}")
                 finally:
                     db.close()
             else:
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
+        manager.disconnect(user_id, websocket)
+    except Exception:
         manager.disconnect(user_id, websocket)
 
 
