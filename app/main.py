@@ -1,22 +1,24 @@
-import json
 import os
-from collections import defaultdict
-from datetime import datetime
-from typing import Dict, List, Optional, Set
+from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth import create_access_token, decode_access_token, hash_password, verify_password
-from app.database import Base, SessionLocal, engine, get_db
+from app.database import Base, engine, get_db
 from app.schemas import (
+    AvatarUpdate,
     ChatCreate,
+    ChatOut,
     DirectChatCreate,
     MessageCreate,
+    MessageOut,
     Token,
     UserCreate,
     UserLogin,
@@ -25,67 +27,37 @@ from app.schemas import (
 
 Base.metadata.create_all(bind=engine)
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(APP_DIR)
-FLUTTER_BUILD_DIR = os.path.join(PROJECT_ROOT, "build", "web")
+app = FastAPI()
+security = HTTPBearer(auto_error=False)
 
-app = FastAPI(title="Exellee Chat")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-PUBLIC_CHAT_CREATION_PASSWORD = "315146"
+BUILD_DIR = Path("build")
+if BUILD_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=BUILD_DIR), name="assets")
 
 
-def pick_avatar_color(username: str) -> str:
-    palette = [
-        "#4f46e5",
-        "#0ea5e9",
-        "#16a34a",
-        "#f97316",
-        "#e11d48",
-        "#a855f7",
-        "#14b8a6",
-        "#f59e0b",
-    ]
-    idx = sum(ord(c) for c in username) % len(palette)
-    return palette[idx]
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authorization header missing")
+
+    payload = decode_access_token(credentials.credentials)
+    if not payload or "sub" not in payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    user = db.query(models.User).filter(models.User.id == int(payload["sub"])).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
 
 
 def serialize_user(user: models.User) -> dict:
     return {
         "id": user.id,
         "username": user.username,
-        "avatar_color": user.avatar_color,
-    }
-
-
-def direct_chat_display_title(chat: models.Chat, current_user_id: int) -> str:
-    if chat.is_public:
-        return chat.title
-
-    users = chat.users or []
-    if len(users) == 2:
-        other = next((u for u in users if u.id != current_user_id), None)
-        if other:
-            return other.username
-    return chat.title
-
-
-def serialize_chat(chat: models.Chat, current_user_id: Optional[int] = None) -> dict:
-    title = chat.title
-    if current_user_id is not None:
-        title = direct_chat_display_title(chat, current_user_id)
-
-    return {
-        "id": chat.id,
-        "title": title,
-        "is_public": chat.is_public,
+        "avatar_url": user.avatar_url,
+        "created_at": user.created_at,
     }
 
 
@@ -93,116 +65,129 @@ def serialize_message(message: models.Message) -> dict:
     return {
         "id": message.id,
         "chat_id": message.chat_id,
-        "user_id": message.user_id,
         "content": message.content,
-        "created_at": message.created_at.isoformat(),
-        "username": message.user.username if message.user else None,
-        "avatar_color": message.user.avatar_color if message.user else None,
+        "created_at": message.created_at,
+        "user": serialize_user(message.user),
     }
 
 
-def get_user_from_token(token: str, db: Session) -> Optional[models.User]:
-    try:
-        payload = decode_access_token(token)
-        user_id = payload.get("sub")
-        if user_id is None:
-            return None
-        return db.query(models.User).filter(models.User.id == int(user_id)).first()
-    except Exception:
-        return None
+def get_chat_members(chat: models.Chat) -> list[models.User]:
+    return [member.user for member in chat.members]
 
 
-def get_current_user(token: str = Query(...), db: Session = Depends(get_db)) -> models.User:
-    user = get_user_from_token(token, db)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return user
+def build_chat_title(chat: models.Chat, current_user_id: int) -> str:
+    if not chat.is_direct:
+        return chat.title or f"Чат #{chat.id}"
+
+    others = [member.user.username for member in chat.members if member.user_id != current_user_id]
+    return others[0] if others else (chat.title or f"Личка #{chat.id}")
 
 
-def user_in_chat(chat: models.Chat, user_id: int) -> bool:
-    users = getattr(chat, "users", None) or []
-    return any(u.id == user_id for u in users)
-
-
-def can_access_chat(chat: models.Chat, user_id: int) -> bool:
-    if chat.is_public:
+def can_access_chat(db: Session, user_id: int, chat: models.Chat) -> bool:
+    if chat.is_public and not chat.is_direct:
         return True
-    return user_in_chat(chat, user_id)
+
+    membership = (
+        db.query(models.ChatMember)
+        .filter(models.ChatMember.chat_id == chat.id, models.ChatMember.user_id == user_id)
+        .first()
+    )
+    return membership is not None
+
+
+def ensure_member(db: Session, chat_id: int, user_id: int):
+    membership = (
+        db.query(models.ChatMember)
+        .filter(models.ChatMember.chat_id == chat_id, models.ChatMember.user_id == user_id)
+        .first()
+    )
+    if not membership:
+        db.add(models.ChatMember(chat_id=chat_id, user_id=user_id))
+        db.commit()
+
+
+def serialize_chat(chat: models.Chat, current_user_id: int) -> dict:
+    last_message = None
+    if chat.messages:
+        ordered = sorted(chat.messages, key=lambda x: x.created_at, reverse=True)
+        if ordered:
+            last_message = serialize_message(ordered[0])
+
+    return {
+        "id": chat.id,
+        "title": build_chat_title(chat, current_user_id),
+        "is_direct": chat.is_direct,
+        "is_public": chat.is_public,
+        "created_at": chat.created_at,
+        "members": [serialize_user(member.user) for member in chat.members],
+        "last_message": last_message,
+    }
 
 
 class ConnectionManager:
     def __init__(self):
-        self.chat_connections: Dict[int, List[WebSocket]] = defaultdict(list)
-        self.online_users: Set[int] = set()
+        self.active_connections: dict[int, list[WebSocket]] = {}
 
-    async def connect(self, chat_id: int, user_id: int, websocket: WebSocket):
+    async def connect(self, user_id: int, websocket: WebSocket):
         await websocket.accept()
-        self.chat_connections[chat_id].append(websocket)
-        self.online_users.add(user_id)
+        self.active_connections.setdefault(user_id, []).append(websocket)
 
-    def disconnect(self, chat_id: int, user_id: int, websocket: WebSocket):
-        if chat_id in self.chat_connections and websocket in self.chat_connections[chat_id]:
-            self.chat_connections[chat_id].remove(websocket)
-            if not self.chat_connections[chat_id]:
-                del self.chat_connections[chat_id]
-        self.online_users.discard(user_id)
+    def disconnect(self, user_id: int, websocket: WebSocket):
+        if user_id in self.active_connections:
+            self.active_connections[user_id] = [
+                ws for ws in self.active_connections[user_id] if ws != websocket
+            ]
+            if not self.active_connections[user_id]:
+                del self.active_connections[user_id]
 
-    async def broadcast(self, chat_id: int, payload: dict):
-        if chat_id not in self.chat_connections:
-            return
+    async def send_to_user(self, user_id: int, payload: dict):
+        for ws in self.active_connections.get(user_id, []):
+            await ws.send_json(payload)
 
-        dead = []
-        message = json.dumps(payload, ensure_ascii=False)
-        for ws in self.chat_connections[chat_id]:
-            try:
-                await ws.send_text(message)
-            except Exception:
-                dead.append(ws)
+    async def broadcast_chat(self, db: Session, chat: models.Chat, payload: dict):
+        targets: set[int] = set()
 
-        for ws in dead:
-            if ws in self.chat_connections.get(chat_id, []):
-                self.chat_connections[chat_id].remove(ws)
+        if chat.is_public and not chat.is_direct:
+            targets = set(self.active_connections.keys())
+        else:
+            targets = {member.user_id for member in chat.members}
 
-    def online_list(self, db: Session) -> list:
-        if not self.online_users:
-            return []
-        users = db.query(models.User).filter(models.User.id.in_(self.online_users)).all()
-        return [serialize_user(u) for u in users]
+        for user_id in targets:
+            await self.send_to_user(user_id, payload)
 
 
 manager = ConnectionManager()
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
 @app.post("/register", response_model=UserOut)
-def register(user: UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(models.User).filter(models.User.username == user.username).first()
+def register(data: UserCreate, db: Session = Depends(get_db)):
+    username = data.username.strip()
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+
+    existing = db.query(models.User).filter(models.User.username == username).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
 
-    new_user = models.User(
-        username=user.username,
-        password_hash=hash_password(user.password),
-        avatar_color=pick_avatar_color(user.username),
+    user = models.User(
+        username=username,
+        password_hash=hash_password(data.password),
+        avatar_url=(data.avatar_url or "").strip() or None,
     )
-    db.add(new_user)
+    db.add(user)
     db.commit()
-    db.refresh(new_user)
-    return new_user
+    db.refresh(user)
+    return user
 
 
 @app.post("/login", response_model=Token)
-def login(user: UserLogin, db: Session = Depends(get_db)):
-    db_user = db.query(models.User).filter(models.User.username == user.username).first()
-    if not db_user or not verify_password(user.password, db_user.password_hash):
+def login(data: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.username == data.username.strip()).first()
+    if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
-    access_token = create_access_token({"sub": str(db_user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
+    token = create_access_token({"sub": str(user.id)})
+    return Token(access_token=token)
 
 
 @app.get("/me", response_model=UserOut)
@@ -210,64 +195,108 @@ def me(current_user: models.User = Depends(get_current_user)):
     return current_user
 
 
-@app.get("/users")
-def get_users(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+@app.put("/me/avatar", response_model=UserOut)
+def update_avatar(
+    payload: AvatarUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    current_user.avatar_url = (payload.avatar_url or "").strip() or None
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+@app.get("/users", response_model=list[UserOut])
+def list_users(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     users = (
         db.query(models.User)
         .filter(models.User.id != current_user.id)
         .order_by(models.User.username.asc())
         .all()
     )
-    return [serialize_user(u) for u in users]
+    return users
 
 
-@app.get("/online-users")
-def get_online_users(db: Session = Depends(get_db)):
-    return manager.online_list(db)
-
-
-@app.get("/chats")
-def get_chats(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    chats = db.query(models.Chat).options(joinedload(models.Chat.users)).order_by(models.Chat.created_at.desc()).all()
-    visible = [serialize_chat(chat, current_user.id) for chat in chats if can_access_chat(chat, current_user.id)]
-    return visible
-
-
-@app.post("/chats")
-def create_chat(
-    chat: ChatCreate,
-    current_user: models.User = Depends(get_current_user),
+@app.get("/chats", response_model=list[ChatOut])
+def list_chats(
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
-    title = chat.title.strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="Chat title cannot be empty")
+    membership_chat_ids = (
+        db.query(models.ChatMember.chat_id)
+        .filter(models.ChatMember.user_id == current_user.id)
+        .subquery()
+    )
 
-    if chat.is_public and chat.creation_password != PUBLIC_CHAT_CREATION_PASSWORD:
-        raise HTTPException(status_code=403, detail="Wrong creation password")
+    chats = (
+        db.query(models.Chat)
+        .options(
+            joinedload(models.Chat.members).joinedload(models.ChatMember.user),
+            joinedload(models.Chat.messages).joinedload(models.Message.user),
+        )
+        .filter(
+            or_(
+                and_(models.Chat.is_public == True, models.Chat.is_direct == False),
+                models.Chat.id.in_(membership_chat_ids),
+            )
+        )
+        .order_by(desc(models.Chat.id))
+        .all()
+    )
 
-    new_chat = models.Chat(
+    return [serialize_chat(chat, current_user.id) for chat in chats]
+
+
+@app.post("/chats", response_model=ChatOut)
+def create_chat(
+    data: ChatCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    title = data.title.strip()
+    if len(title) < 1:
+        raise HTTPException(status_code=400, detail="Chat title is required")
+
+    if data.is_public:
+        if data.create_password != "315146":
+            raise HTTPException(status_code=403, detail="Wrong password for public chat creation")
+
+    chat = models.Chat(
         title=title,
-        is_public=chat.is_public,
+        is_direct=False,
+        is_public=data.is_public,
         created_by_id=current_user.id,
     )
-    db.add(new_chat)
+    db.add(chat)
     db.commit()
-    db.refresh(new_chat)
+    db.refresh(chat)
 
-    if not chat.is_public:
-        new_chat.users.append(current_user)
-        db.commit()
-        db.refresh(new_chat)
+    db.add(models.ChatMember(chat_id=chat.id, user_id=current_user.id))
+    db.commit()
 
-    return serialize_chat(new_chat, current_user.id)
+    chat = (
+        db.query(models.Chat)
+        .options(
+            joinedload(models.Chat.members).joinedload(models.ChatMember.user),
+            joinedload(models.Chat.messages).joinedload(models.Message.user),
+        )
+        .filter(models.Chat.id == chat.id)
+        .first()
+    )
+
+    return serialize_chat(chat, current_user.id)
 
 
-@app.post("/direct-chats")
+@app.post("/direct-chats", response_model=ChatOut)
 def create_direct_chat(
     data: DirectChatCreate,
-    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
     if data.user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot create direct chat with yourself")
@@ -276,200 +305,198 @@ def create_direct_chat(
     if not other_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    private_chats = (
+    direct_chats = (
         db.query(models.Chat)
-        .filter(models.Chat.is_public == False)  # noqa: E712
-        .options(joinedload(models.Chat.users))
+        .options(joinedload(models.Chat.members).joinedload(models.ChatMember.user))
+        .filter(models.Chat.is_direct == True)
         .all()
     )
 
-    for chat in private_chats:
-        ids = sorted([u.id for u in chat.users])
-        if ids == sorted([current_user.id, other_user.id]):
+    for chat in direct_chats:
+        member_ids = sorted([member.user_id for member in chat.members])
+        if member_ids == sorted([current_user.id, data.user_id]):
             return serialize_chat(chat, current_user.id)
 
-    new_chat = models.Chat(
-        title=f"{current_user.username} & {other_user.username}",
+    chat = models.Chat(
+        title=None,
+        is_direct=True,
         is_public=False,
         created_by_id=current_user.id,
     )
-    db.add(new_chat)
+    db.add(chat)
     db.commit()
-    db.refresh(new_chat)
+    db.refresh(chat)
 
-    new_chat.users.append(current_user)
-    new_chat.users.append(other_user)
+    db.add_all(
+        [
+            models.ChatMember(chat_id=chat.id, user_id=current_user.id),
+            models.ChatMember(chat_id=chat.id, user_id=data.user_id),
+        ]
+    )
     db.commit()
-    db.refresh(new_chat)
 
-    return serialize_chat(new_chat, current_user.id)
-
-
-@app.get("/chats/{chat_id}/messages")
-def get_messages(
-    chat_id: int,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
     chat = (
         db.query(models.Chat)
-        .options(joinedload(models.Chat.users))
-        .filter(models.Chat.id == chat_id)
+        .options(
+            joinedload(models.Chat.members).joinedload(models.ChatMember.user),
+            joinedload(models.Chat.messages).joinedload(models.Message.user),
+        )
+        .filter(models.Chat.id == chat.id)
         .first()
     )
+
+    return serialize_chat(chat, current_user.id)
+
+
+@app.get("/chats/{chat_id}/messages", response_model=list[MessageOut])
+def get_messages(
+    chat_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    chat = db.query(models.Chat).filter(models.Chat.id == chat_id).first()
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    if not can_access_chat(chat, current_user.id):
+    if not can_access_chat(db, current_user.id, chat):
         raise HTTPException(status_code=403, detail="Access denied")
+
+    if chat.is_public and not chat.is_direct:
+        ensure_member(db, chat.id, current_user.id)
 
     messages = (
         db.query(models.Message)
         .options(joinedload(models.Message.user))
         .filter(models.Message.chat_id == chat_id)
-        .order_by(models.Message.created_at.asc())
+        .order_by(models.Message.created_at.asc(), models.Message.id.asc())
         .all()
     )
-    return [serialize_message(m) for m in messages]
+    return [serialize_message(msg) for msg in messages]
 
 
-@app.post("/chats/{chat_id}/messages")
+@app.post("/chats/{chat_id}/messages", response_model=MessageOut)
 async def create_message(
     chat_id: int,
-    message: MessageCreate,
-    current_user: models.User = Depends(get_current_user),
+    data: MessageCreate,
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
     chat = (
         db.query(models.Chat)
-        .options(joinedload(models.Chat.users))
+        .options(
+            joinedload(models.Chat.members).joinedload(models.ChatMember.user),
+            joinedload(models.Chat.messages).joinedload(models.Message.user),
+        )
         .filter(models.Chat.id == chat_id)
         .first()
     )
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    if not can_access_chat(chat, current_user.id):
+    if not can_access_chat(db, current_user.id, chat):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    content = message.content.strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-    new_message = models.Message(
-        chat_id=chat_id,
-        user_id=current_user.id,
-        content=content,
-        created_at=datetime.utcnow(),
-    )
-    db.add(new_message)
-    db.commit()
-    db.refresh(new_message)
-    db.refresh(current_user)
-
-    new_message.user = current_user
-
-    payload = serialize_message(new_message)
-    await manager.broadcast(chat_id, {"type": "new_message", "message": payload})
-    return payload
-
-
-@app.websocket("/ws/{chat_id}")
-async def websocket_endpoint(websocket: WebSocket, chat_id: int, token: str = Query(...)):
-    db = SessionLocal()
-    user = None
-
-    try:
-        user = get_user_from_token(token, db)
-        if not user:
-            await websocket.close(code=1008)
-            return
-
+    if chat.is_public and not chat.is_direct:
+        ensure_member(db, chat.id, current_user.id)
         chat = (
             db.query(models.Chat)
-            .options(joinedload(models.Chat.users))
+            .options(joinedload(models.Chat.members).joinedload(models.ChatMember.user))
             .filter(models.Chat.id == chat_id)
             .first()
         )
-        if not chat or not can_access_chat(chat, user.id):
-            await websocket.close(code=1008)
-            return
 
-        await manager.connect(chat_id, user.id, websocket)
-        await manager.broadcast(chat_id, {"type": "online_users", "users": manager.online_list(db)})
+    content = data.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    message = models.Message(chat_id=chat_id, user_id=current_user.id, content=content)
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+
+    message = (
+        db.query(models.Message)
+        .options(joinedload(models.Message.user))
+        .filter(models.Message.id == message.id)
+        .first()
+    )
+
+    payload = {
+        "type": "message",
+        "chat_id": chat_id,
+        "message": serialize_message(message),
+    }
+    await manager.broadcast_chat(db, chat, payload)
+
+    return serialize_message(message)
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
+    payload = decode_access_token(token)
+    if not payload or "sub" not in payload:
+        await websocket.close(code=1008)
+        return
+
+    user_id = int(payload["sub"])
+    await manager.connect(user_id, websocket)
+
+    try:
         while True:
-            data = await websocket.receive_text()
+            data = await websocket.receive_json()
+            event_type = data.get("type")
 
-            if data == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
-                continue
+            if event_type == "typing":
+                chat_id = int(data.get("chat_id"))
+                is_typing = bool(data.get("is_typing", False))
 
-            if data == "typing":
-                await manager.broadcast(
-                    chat_id,
-                    {
-                        "type": "typing",
-                        "chat_id": chat_id,
-                        "user_id": user.id,
-                        "username": user.username,
-                    },
-                )
-                continue
+                from app.database import SessionLocal
+                db = SessionLocal()
+                try:
+                    chat = (
+                        db.query(models.Chat)
+                        .options(joinedload(models.Chat.members).joinedload(models.ChatMember.user))
+                        .filter(models.Chat.id == chat_id)
+                        .first()
+                    )
+                    if not chat:
+                        continue
+                    if not can_access_chat(db, user_id, chat):
+                        continue
 
+                    user = db.query(models.User).filter(models.User.id == user_id).first()
+                    await manager.broadcast_chat(
+                        db,
+                        chat,
+                        {
+                            "type": "typing",
+                            "chat_id": chat_id,
+                            "is_typing": is_typing,
+                            "user": serialize_user(user),
+                        },
+                    )
+                finally:
+                    db.close()
+            else:
+                await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        print("WebSocket error:", repr(e))
-        try:
-            await websocket.close(code=1011)
-        except Exception:
-            pass
-    finally:
-        if user:
-            manager.disconnect(chat_id, user.id, websocket)
-            try:
-                await manager.broadcast(chat_id, {"type": "online_users", "users": manager.online_list(db)})
-            except Exception:
-                pass
-        db.close()
-
-
-if os.path.isdir(FLUTTER_BUILD_DIR):
-    assets_dir = os.path.join(FLUTTER_BUILD_DIR, "assets")
-    canvaskit_dir = os.path.join(FLUTTER_BUILD_DIR, "canvaskit")
-    icons_dir = os.path.join(FLUTTER_BUILD_DIR, "icons")
-
-    if os.path.isdir(assets_dir):
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
-    if os.path.isdir(canvaskit_dir):
-        app.mount("/canvaskit", StaticFiles(directory=canvaskit_dir), name="canvaskit")
-    if os.path.isdir(icons_dir):
-        app.mount("/icons", StaticFiles(directory=icons_dir), name="icons")
+        manager.disconnect(user_id, websocket)
 
 
 @app.get("/")
-def serve_root():
-    index_file = os.path.join(FLUTTER_BUILD_DIR, "index.html")
-    if os.path.exists(index_file):
-        return FileResponse(index_file)
-    return {
-        "status": "error",
-        "message": "Flutter web build not found. Run: flutter build web"
-    }
+def root():
+    index_path = BUILD_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    return {"status": "ok"}
 
 
 @app.get("/{full_path:path}")
-def serve_flutter(full_path: str):
-    if full_path.startswith("docs") or full_path.startswith("openapi.json"):
-        raise HTTPException(status_code=404, detail="Not Found")
+def spa_fallback(full_path: str):
+    if full_path.startswith("ws") or full_path.startswith("api"):
+        raise HTTPException(status_code=404, detail="Not found")
 
-    file_path = os.path.join(FLUTTER_BUILD_DIR, full_path)
-    if os.path.isfile(file_path):
-        return FileResponse(file_path)
-
-    index_file = os.path.join(FLUTTER_BUILD_DIR, "index.html")
-    if os.path.exists(index_file):
-        return FileResponse(index_file)
-
-    raise HTTPException(status_code=404, detail="Flutter web build not found")
+    index_path = BUILD_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404, detail="Frontend not found")
