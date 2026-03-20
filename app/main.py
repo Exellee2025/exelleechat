@@ -25,6 +25,7 @@ security = HTTPBearer()
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 active_connections: dict[int, list[WebSocket]] = {}
+online_users: dict[int, str] = {}
 
 
 @app.on_event("startup")
@@ -135,6 +136,28 @@ def get_users(
     current_user: models.User = Depends(get_current_user),
 ):
     return db.query(models.User).all()
+
+
+@app.get("/online-users")
+def get_online_users(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    ids = list(online_users.keys())
+
+    if not ids:
+        return []
+
+    users = db.query(models.User).filter(models.User.id.in_(ids)).all()
+
+    return [
+        {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+        }
+        for user in users
+    ]
 
 
 @app.post("/chats", response_model=ChatOut)
@@ -322,6 +345,8 @@ async def websocket_endpoint(
 
         await websocket.accept()
 
+        online_users[user.id] = user.username
+
         if chat_id not in active_connections:
             active_connections[chat_id] = []
         active_connections[chat_id].append(websocket)
@@ -339,5 +364,15 @@ async def websocket_endpoint(
 
             if chat_id in active_connections and not active_connections[chat_id]:
                 del active_connections[chat_id]
+
+            still_online = any(
+                user.id in [
+                    get_current_user_from_token(token, db).id
+                    for token in []
+                ]
+            )
+            # Заглушка не нужна, просто удаляем юзера при закрытии текущего сокета
+            if user.id in online_users:
+                del online_users[user.id]
     finally:
         db.close()
