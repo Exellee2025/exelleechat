@@ -224,6 +224,8 @@ class ConnectionManager:
     async def connect(self, user_id: int, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.setdefault(user_id, []).append(websocket)
+        total = sum(len(sockets) for sockets in self.active_connections.values())
+        print(f"[WS] connect user_id={user_id} total_sockets={total}")
 
     def disconnect(self, user_id: int, websocket: WebSocket):
         if user_id not in self.active_connections:
@@ -235,6 +237,9 @@ class ConnectionManager:
         if not self.active_connections[user_id]:
             del self.active_connections[user_id]
 
+        total = sum(len(sockets) for sockets in self.active_connections.values())
+        print(f"[WS] disconnect user_id={user_id} total_sockets={total}")
+
     async def send_to_user(self, user_id: int, payload: dict):
         sockets = list(self.active_connections.get(user_id, []))
         dead = []
@@ -242,7 +247,8 @@ class ConnectionManager:
         for ws in sockets:
             try:
                 await ws.send_json(payload)
-            except Exception:
+            except Exception as e:
+                print(f"[WS] send failed user_id={user_id}: {e}")
                 dead.append(ws)
 
         for ws in dead:
@@ -253,6 +259,11 @@ class ConnectionManager:
             targets = list(self.active_connections.keys())
         else:
             targets = list({member.user_id for member in chat.members})
+
+        print(
+            f"[WS] broadcast type={payload.get('type')} "
+            f"chat_id={payload.get('chat_id')} targets={targets}"
+        )
 
         for user_id in targets:
             await self.send_to_user(user_id, payload)
@@ -593,7 +604,15 @@ async def create_message(
     if not can_access_chat(db, current_user.id, chat):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Создание нового сообщения
+    if chat.is_public and not chat.is_direct and not chat.password_hash:
+        ensure_member(db, chat.id, current_user.id)
+        chat = (
+            db.query(models.Chat)
+            .options(joinedload(models.Chat.members).joinedload(models.ChatMember.user))
+            .filter(models.Chat.id == chat_id)
+            .first()
+        )
+
     content = (data.content or "").strip()
     media_url = safe_trim(data.media_url)
     media_type = safe_trim(data.media_type)
@@ -619,7 +638,6 @@ async def create_message(
         .first()
     )
 
-    # Отправляем сообщение всем пользователям в чате
     payload = {
         "type": "message",
         "chat_id": chat_id,
@@ -627,7 +645,12 @@ async def create_message(
     }
 
     try:
-        await manager.broadcast_chat(chat, payload)  # Оповещаем всех участников чата
+        print(
+            f"[MSG] create id={message.id} chat_id={chat_id} "
+            f"user_id={current_user.id} content_len={len(message.content or '')} "
+            f"has_media={bool(message.media_url)}"
+        )
+        await manager.broadcast_chat(chat, payload)
     except Exception as e:
         print(f"Broadcast warning: {e}")
 
@@ -643,6 +666,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
 
     user_id = int(payload["sub"])
     await manager.connect(user_id, websocket)
+    await websocket.send_json({"type": "connected", "user_id": user_id})
 
     try:
         while True:
@@ -686,11 +710,14 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     )
                 finally:
                     db.close()
+            elif event_type == "ping":
+                await websocket.send_json({"type": "pong", "ts": int(time.time())})
             else:
-                await websocket.send_json({"type": "pong"})
+                await websocket.send_json({"type": "pong", "ts": int(time.time())})
     except WebSocketDisconnect:
         manager.disconnect(user_id, websocket)
-    except Exception:
+    except Exception as e:
+        print(f"[WS] endpoint error user_id={user_id}: {e}")
         manager.disconnect(user_id, websocket)
 
 
