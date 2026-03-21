@@ -1362,9 +1362,7 @@
             message: data.message
           });
 
-          appendMessage(data.message); else {
-            console.log("НЕ ТЕКУЩИЙ ЧАТ");
-          }
+          appendMessage(data.message);
 
           if (state.me && Number(data.message?.user?.id) !== Number(state.me.id)) {
             const name = displayName(data.message.user);
