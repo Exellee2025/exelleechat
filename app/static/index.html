@@ -1362,9 +1362,7 @@
             message: data.message
           });
 
-          if (Number(data.chat_id) === Number(state.currentChatId)) {
-            appendMessage(data.message);
-          } else {
+          appendMessage(data.message); else {
             console.log("НЕ ТЕКУЩИЙ ЧАТ");
           }
 
