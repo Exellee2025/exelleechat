@@ -678,8 +678,6 @@
       remoteTypingTimers: {},
       renderedMessageIds: new Set(),
       pendingMediaFile: null,
-      wsPingTimer: null,
-      wsReconnectTimer: null,
     };
 
     const el = {
@@ -914,14 +912,6 @@
       state.currentChatId = null;
       state.pendingMediaFile = null;
       clearSelectedFile();
-      if (state.wsPingTimer) {
-        clearInterval(state.wsPingTimer);
-        state.wsPingTimer = null;
-      }
-      if (state.wsReconnectTimer) {
-        clearTimeout(state.wsReconnectTimer);
-        state.wsReconnectTimer = null;
-      }
       if (state.ws) {
         try { state.ws.close(); } catch (_) {}
       }
@@ -1353,53 +1343,29 @@
     function connectWs() {
       if (!state.token) return;
 
-      if (state.wsReconnectTimer) {
-        clearTimeout(state.wsReconnectTimer);
-        state.wsReconnectTimer = null;
-      }
-
-      if (state.wsPingTimer) {
-        clearInterval(state.wsPingTimer);
-        state.wsPingTimer = null;
-      }
-
       if (state.ws) {
         try { state.ws.close(); } catch (_) {}
       }
 
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      const wsUrl = `${proto}://${location.host}/ws?token=${encodeURIComponent(state.token)}`;
-      console.log("[WS] connecting", wsUrl);
-      state.ws = new WebSocket(wsUrl);
-
-      state.ws.onopen = () => {
-        console.log("[WS] open");
-        if (state.wsPingTimer) clearInterval(state.wsPingTimer);
-        state.wsPingTimer = setInterval(() => {
-          if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-            state.ws.send(JSON.stringify({ type: "ping" }));
-          }
-        }, 20000);
-      };
+      state.ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(state.token)}`);
 
       state.ws.onmessage = async (event) => {
         const data = JSON.parse(event.data);
-        console.log("[WS] message", data);
-
-        if (data.type === "connected") {
-          console.log("[WS] connected ack user_id=", data.user_id);
-          return;
-        }
-
-        if (data.type === "pong") {
-          return;
-        }
 
         if (data.type === "message") {
           await loadChats();
 
+          console.log("WS DEBUG:", {
+            incomingChat: data.chat_id,
+            currentChat: state.currentChatId,
+            message: data.message
+          });
+
           if (Number(data.chat_id) === Number(state.currentChatId)) {
             appendMessage(data.message);
+          } else {
+            console.log("НЕ ТЕКУЩИЙ ЧАТ");
           }
 
           if (state.me && Number(data.message?.user?.id) !== Number(state.me.id)) {
@@ -1427,17 +1393,8 @@
         }
       };
 
-      state.ws.onerror = (event) => {
-        console.error("[WS] error", event);
-      };
-
-      state.ws.onclose = (event) => {
-        console.warn("[WS] close", event.code, event.reason || "");
-        if (state.wsPingTimer) {
-          clearInterval(state.wsPingTimer);
-          state.wsPingTimer = null;
-        }
-        state.wsReconnectTimer = setTimeout(() => {
+      state.ws.onclose = () => {
+        setTimeout(() => {
           if (state.token) connectWs();
         }, 1500);
       };
