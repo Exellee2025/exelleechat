@@ -593,15 +593,7 @@ async def create_message(
     if not can_access_chat(db, current_user.id, chat):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    if chat.is_public and not chat.is_direct and not chat.password_hash:
-        ensure_member(db, chat.id, current_user.id)
-        chat = (
-            db.query(models.Chat)
-            .options(joinedload(models.Chat.members).joinedload(models.ChatMember.user))
-            .filter(models.Chat.id == chat_id)
-            .first()
-        )
-
+    # Создание нового сообщения
     content = (data.content or "").strip()
     media_url = safe_trim(data.media_url)
     media_type = safe_trim(data.media_type)
@@ -627,6 +619,7 @@ async def create_message(
         .first()
     )
 
+    # Отправляем сообщение всем пользователям в чате
     payload = {
         "type": "message",
         "chat_id": chat_id,
@@ -634,7 +627,7 @@ async def create_message(
     }
 
     try:
-        await manager.broadcast_chat(chat, payload)
+        await manager.broadcast_chat(chat, payload)  # Оповещаем всех участников чата
     except Exception as e:
         print(f"Broadcast warning: {e}")
 

@@ -1445,6 +1445,43 @@
         setLoggedOutUI();
       }
     })();
-  </script>
+  
+  state.ws.onmessage = async (event) => {
+      const data = JSON.parse(event.data);
+
+      // Если пришло сообщение
+      if (data.type === "message") {
+          // Если новое сообщение, сразу обновляем чат
+          if (Number(data.chat_id) === Number(state.currentChatId)) {
+              appendMessage(data.message);  // Отображаем новое сообщение
+          }
+
+          // Если сообщение от другого пользователя
+          if (state.me && Number(data.message?.user?.id) !== Number(state.me.id)) {
+              const name = displayName(data.message.user);
+              const body = data.message.content || (data.message.media_url ? "[медиа]" : "Новое сообщение");
+              playBeep();  // Звук уведомления
+              showBrowserNotification(name, body);  // Уведомление браузера
+          }
+      }
+
+      // Если кто-то печатает
+      if (data.type === "typing") {
+          if (!state.me) return;
+          if (Number(data.user?.id) === Number(state.me.id)) return;
+          if (Number(data.chat_id) !== Number(state.currentChatId)) return;
+
+          if (data.is_typing) {
+              el.typingIndicator.textContent = `${displayName(data.user)} печатает...`;
+              clearTimeout(state.remoteTypingTimers[data.user.id]);
+              state.remoteTypingTimers[data.user.id] = setTimeout(() => {
+                  el.typingIndicator.textContent = "";
+              }, 1500);
+          } else {
+              el.typingIndicator.textContent = "";
+          }
+      }
+  };
+</script>
 </body>
 </html>
